@@ -17,7 +17,7 @@ from python_runner import run_python
 from auth import register, login, get_user_from_request
 
 # === Logging setup ===
-LOG_DIR = Path(__file__).parent / "logs"
+LOG_DIR = Path(__file__).parent.parent / "feedback" / "logs"
 LOG_DIR.mkdir(exist_ok=True)
 
 # Chat log: every conversation turn (user question, AI response, SQL, results, errors)

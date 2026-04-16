@@ -224,7 +224,14 @@ def _save_session_sync(data: dict):
                  topic_summary, queries_run, errors_hit, satisfaction,
                  user_rating, user_feedback, conversation, ai_notes)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT DO NOTHING
+                ON CONFLICT (session_id) DO UPDATE SET
+                    ended_at = EXCLUDED.ended_at,
+                    topic_summary = EXCLUDED.topic_summary,
+                    queries_run = EXCLUDED.queries_run,
+                    errors_hit = EXCLUDED.errors_hit,
+                    satisfaction = EXCLUDED.satisfaction,
+                    conversation = EXCLUDED.conversation,
+                    ai_notes = EXCLUDED.ai_notes
             """, (
                 data["session_id"], data.get("client_ip"),
                 data.get("started_at"), data.get("ended_at"),

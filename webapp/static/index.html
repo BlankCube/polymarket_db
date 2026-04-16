@@ -89,13 +89,28 @@ const sessionStartedAt = new Date().toISOString();
 // Save session when user leaves
 window.addEventListener('beforeunload', () => {
   if (conversationHistory.length > 0) {
-    navigator.sendBeacon('/api/end-session', JSON.stringify({
+    const blob = new Blob([JSON.stringify({
       session_id: sessionId,
       messages: conversationHistory,
       started_at: sessionStartedAt,
-    }));
+    })], {type: 'application/json'});
+    navigator.sendBeacon('/api/end-session', blob);
   }
 });
+// Also save periodically (every 2 min) in case beforeunload fails
+setInterval(() => {
+  if (conversationHistory.length > 0) {
+    fetch('/api/end-session', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        session_id: sessionId,
+        messages: conversationHistory,
+        started_at: sessionStartedAt,
+      })
+    }).catch(() => {});
+  }
+}, 120000);
 
 function handleKey(e) {
   if (e.key === 'Enter' && !e.shiftKey) {

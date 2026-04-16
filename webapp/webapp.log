@@ -94,3 +94,20 @@ INFO:     136.52.127.66:58054 - "POST /api/chat HTTP/1.1" 200 OK
 INFO:     136.52.127.66:58103 - "POST /api/chat HTTP/1.1" 200 OK
 INFO:     136.52.127.66:58160 - "POST /api/chat HTTP/1.1" 200 OK
 INFO:     136.52.127.66:58162 - "POST /api/chat HTTP/1.1" 200 OK
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [352353]
+INFO:     Started server process [353094]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8080 (Press CTRL+C to quit)
+INFO:     136.52.127.66:58453 - "POST /api/chat HTTP/1.1" 200 OK
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [353094]
+INFO:     Started server process [353634]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8080 (Press CTRL+C to quit)

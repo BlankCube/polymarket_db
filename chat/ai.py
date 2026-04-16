@@ -85,8 +85,11 @@ Then the specifics:
 [Ask for confirmation]
 
 ## Important
-- Use neutral language. Don't judge the trades as "stupid" or "irrational" — just describe what happened factually.
-- Don't assume intent beyond what the user stated.
+- **Only describe what data you'll query. Never interpret why the user is asking.**
+  Bad: "你想质疑是否有人会在结果明确后做出不明智的交易"
+  Good: "你想查：在事件结果确定后，以高价买入了最终亏损方向的交易记录，以及亏损金额"
+- Use neutral language. "买入了最终输的方向" not "做出愚蠢的交易".
+- Don't add words like "仍然"、"竟然"、"不明智" — these imply judgment. Just state the filter conditions.
 """
 
 # === Prompt 2: Code Generation ===

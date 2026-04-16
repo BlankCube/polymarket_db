@@ -38,16 +38,72 @@ The data layer. Contains all Polymarket on-chain trading data.
 
 A standard AI chat interface with a specific system prompt and tool access. Not fundamentally different from any other AI chat product — the differentiation is in the prompt engineering and the database it connects to.
 
-**What it does:**
-- Takes natural language input from users
-- Confirms understanding before acting (3-step flow: understand → confirm → execute)
-- Generates SQL or Python code to query Part 1
-- Executes queries safely (SQL validation, read-only connections, timeouts)
-- Interprets results in plain language with data-backed conclusions
+**Key files:** chat/app.py, chat/ai.py, chat/sql_safety.py, chat/python_runner.py, chat/db_pool.py, chat/auth.py, chat/static/index.html
 
-**Key files:** webapp/app.py, webapp/ai.py, webapp/sql_safety.py, webapp/python_runner.py, webapp/db_pool.py, webapp/auth.py, webapp/static/index.html
+#### User-AI Interaction Flow
 
-**The system prompt defines:** domain knowledge (what Polymarket is, how prices/payouts work, profit math), behavior rules (confirm first, match language, every claim needs a number), and tool instructions (SQL/Python format, table schemas, index hints)
+The user never sees code or raw SQL. Everything is natural language. The flow consists of 5 steps, each backed by a separate AI call with its own focused prompt.
+
+```
+Step 1: UNDERSTAND
+  User: "在大选后高价买入的人赚钱了吗？"
+  AI Call 1 (prompt: understanding)
+  → AI: "我理解你想知道的是：
+         - 在2024美国大选相关市场中
+         - 在事件截止后（end_date之后）
+         - 以高价（≥0.95）买入的交易
+         - 最终是赚钱还是亏钱
+         这样理解对吗？"
+
+Step 2: CONFIRM
+  User: "对" / "不对，我是说..." (if wrong, go back to Step 1)
+
+Step 3: GENERATE & EXECUTE (hidden from user)
+  AI Call 2 (prompt: code generation)
+  → AI generates SQL or Python code
+  → Backend executes it, gets raw results
+  → User sees nothing during this step (maybe a loading indicator)
+
+Step 4: DESCRIBE THE QUERY
+  AI Call 3 (prompt: query description)
+  Input: the code that was executed + the parameters used
+  → AI: "我查询了以下数据：
+         - 范围：所有包含 'election'、'president'、'trump'、'harris' 关键词的市场
+         - 时间窗口：每个市场的事件截止日期之后、链上结算之前
+         - 价格：买入价 ≥ 0.95
+         - 数据量：共找到 23,230 笔符合条件的交易，涉及 2,961 个市场"
+  Purpose: 让用户知道 AI 具体查了什么，确认范围是否正确
+
+Step 5: INTERPRET RESULTS
+  AI Call 4 (prompt: data interpretation)
+  Input: the raw query results (tables, numbers)
+  → AI: "结果分析：
+         - 0.99 价位：116,478 笔交易，胜率 99.6%，但 ROI 仅 0.86%
+           盈亏平衡需要 99% 胜率，当前胜率刚好超过，策略微利
+         - 0.95 价位：23,230 笔，胜率 95.7%，盈亏平衡需要 95%
+           刚好及格，但样本中有 1,009 笔亏损交易
+         - 最大单笔亏损：$62,703（'第三方候选人≥2%选票'市场）
+         ..."
+  Purpose: 用数据说话，每个结论附带具体数字
+```
+
+**What the user sees on screen:**
+- Step 1: AI's understanding (text)
+- Step 2: Their confirmation (text)
+- Step 4: Query description (text) — what was searched, what filters, how much data
+- Step 5: Data interpretation (text) — findings with numbers
+- Optional: a collapsible "raw data" section if the user wants to see the actual table
+
+**What the user NEVER sees:**
+- SQL code
+- Python code
+- Raw uninterpreted tables (unless they explicitly expand)
+
+**Why 4 separate AI calls instead of 1?**
+Each call has a focused prompt optimized for one task. A single call trying to do understanding + code generation + description + interpretation produces worse results on every dimension. Separate calls also allow us to:
+- Use different models for different steps (e.g., cheaper model for code gen, better model for interpretation)
+- Log and debug each step independently
+- Retry one step without redoing everything
 
 ### Part 3: Self-Improvement System
 

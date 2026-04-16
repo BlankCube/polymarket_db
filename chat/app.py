@@ -75,12 +75,13 @@ def log_chat(event_type: str, data: dict, client_ip: str = ""):
 
 
 def _is_confirmation(text: str) -> bool:
-    """Check if user message is a confirmation to proceed."""
-    t = text.strip().lower()
-    confirms = ['对', '没错', '查吧', '是的', '好', '好的', '可以', '行', '嗯', '确认',
-                 'yes', 'ok', 'go', 'sure', 'correct', 'right', 'yep', 'yeah', 'do it',
-                 'go ahead', 'proceed', 'confirm', 'y']
-    return t in confirms or len(t) <= 5 and any(c in t for c in confirms)
+    """Check if user message is a confirmation to proceed. Exact match only."""
+    t = text.strip().lower().rstrip('。.!！')
+    confirms = {'对', '没错', '查吧', '是的', '好', '好的', '可以', '行', '嗯', '确认',
+                '对的', '没问题', '就这样', '开始吧', '查', '是',
+                'yes', 'ok', 'go', 'sure', 'correct', 'right', 'yep', 'yeah',
+                'do it', 'go ahead', 'proceed', 'confirm', 'y'}
+    return t in confirms
 
 
 async def process_chat(messages: list[dict], client_ip: str):

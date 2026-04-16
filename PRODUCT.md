@@ -15,6 +15,63 @@ Examples:
 
 **What they need**: The ability to express a research idea in plain language and get back data-supported answers. They value accuracy over speed, and raw data over hand-wavy conclusions.
 
+---
+
+## System Architecture (3 Parts)
+
+### Part 1: Database
+
+The data layer. Contains all Polymarket on-chain trading data.
+
+**What it does:**
+- Indexes blockchain events (trades, resolutions, redemptions) from Polygon via full node RPC
+- Syncs market metadata (questions, dates, categories) from Polymarket Gamma API
+- Stores everything in PostgreSQL with indexes optimized for analytical queries
+
+**Key files:** config.py, db.py, schema.sql, indexer.py, unified_indexer.py, sync_markets.py, sync_categories.py
+
+**Key tables:** markets, order_fills (170M+ rows), token_market_map, resolutions, redemptions, backtest_trades (materialized view)
+
+**The AI accesses this via:** SQL queries (through asyncpg pool, read-only) and Python code (through query_db() function in subprocess)
+
+### Part 2: AI Chat System
+
+A standard AI chat interface with a specific system prompt and tool access. Not fundamentally different from any other AI chat product — the differentiation is in the prompt engineering and the database it connects to.
+
+**What it does:**
+- Takes natural language input from users
+- Confirms understanding before acting (3-step flow: understand → confirm → execute)
+- Generates SQL or Python code to query Part 1
+- Executes queries safely (SQL validation, read-only connections, timeouts)
+- Interprets results in plain language with data-backed conclusions
+
+**Key files:** webapp/app.py, webapp/ai.py, webapp/sql_safety.py, webapp/python_runner.py, webapp/db_pool.py, webapp/auth.py, webapp/static/index.html
+
+**The system prompt defines:** domain knowledge (what Polymarket is, how prices/payouts work, profit math), behavior rules (confirm first, match language, every claim needs a number), and tool instructions (SQL/Python format, table schemas, index hints)
+
+### Part 3: Self-Improvement System
+
+Collects user behavior data, enables periodic review, and provides a framework for making changes.
+
+**What it does:**
+- Logs every interaction (user queries, AI responses, SQL/Python executed, errors) to chat.jsonl
+- Saves full conversation history per session to user_sessions table (with user_id, ratings, feedback)
+- Provides feedback buttons (thumbs up/down + free text) on every AI response
+
+**How improvement works:**
+1. User data accumulates in logs + database
+2. Developer (or scheduled process) reviews the data periodically
+3. Issues are analyzed using the Improvement Methodology (below)
+4. Approved changes are applied to the system prompt or code
+5. Impact is monitored after deployment
+
+**Key data sources for review:**
+- `webapp/logs/chat.jsonl` — raw interaction log
+- `user_sessions` table — per-session conversations, ratings, feedback
+- Server logs — errors, timeouts, failed queries
+
+---
+
 ## Core Principles
 
 ### 1. Users Are Smarter Than The AI

@@ -227,3 +227,41 @@ async def chat_stream(messages: list[dict]):
             full_text += text
             yield ("text", text)
         yield ("full_response", full_text)
+
+
+SESSION_SUMMARY_PROMPT = """Analyze this conversation between a user and a Polymarket data assistant. Return a JSON object with:
+
+{
+  "topic": "1-2 sentence summary of what the user was exploring",
+  "queries_run": <number of SQL/Python queries executed>,
+  "errors_hit": <number of errors encountered>,
+  "satisfaction": "positive|negative|neutral|unknown",
+  "improvement_notes": "specific suggestions for improving the system based on this session. What went wrong? What confused the user? What feature was missing?"
+}
+
+Base satisfaction on: Did the user get useful results? Did they express frustration? Did the conversation end naturally or abruptly?
+
+Return ONLY the JSON, no other text."""
+
+
+async def summarize_session(messages: list[dict]) -> dict:
+    """AI summarizes a session for feedback tracking."""
+    # Only send last 20 messages to save tokens
+    recent = messages[-20:] if len(messages) > 20 else messages
+    try:
+        resp = await client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=500,
+            system=SESSION_SUMMARY_PROMPT,
+            messages=recent,
+        )
+        text = resp.content[0].text.strip()
+        return json.loads(text)
+    except Exception as e:
+        return {
+            "topic": "Session summary failed",
+            "queries_run": 0,
+            "errors_hit": 0,
+            "satisfaction": "unknown",
+            "improvement_notes": f"Summary generation error: {e}",
+        }

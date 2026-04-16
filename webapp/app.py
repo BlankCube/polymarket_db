@@ -1,8 +1,10 @@
 """FastAPI web application for natural language Polymarket database queries."""
 
 import json
+import uuid
 import asyncio
 import logging
+import psycopg2
 from datetime import datetime, date
 from decimal import Decimal
 from pathlib import Path
@@ -11,7 +13,7 @@ from fastapi.responses import StreamingResponse, HTMLResponse, FileResponse
 
 from db_pool import init_pool, close_pool, execute_query
 from sql_safety import validate_and_limit
-from ai import chat_stream, extract_sql, extract_python
+from ai import chat_stream, extract_sql, extract_python, summarize_session
 from python_runner import run_python
 
 # === Logging setup ===
@@ -194,6 +196,7 @@ async def process_chat(messages: list[dict], client_ip: str):
 async def chat(request: Request):
     body = await request.json()
     messages = body.get("messages", [])
+    session_id = body.get("session_id", str(uuid.uuid4()))
     client_ip = request.client.host if request.client else "unknown"
 
     return StreamingResponse(
@@ -205,3 +208,108 @@ async def chat(request: Request):
             "X-Accel-Buffering": "no",
         }
     )
+
+
+def _save_session_sync(data: dict):
+    """Save session to DB (sync, called from background)."""
+    conn = psycopg2.connect(
+        host="localhost", port=5432, dbname="polymarket_db",
+        user="polymarket", password="polymarket123"
+    )
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO user_sessions
+                (session_id, client_ip, started_at, ended_at,
+                 topic_summary, queries_run, errors_hit, satisfaction,
+                 user_rating, user_feedback, conversation, ai_notes)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT DO NOTHING
+            """, (
+                data["session_id"], data.get("client_ip"),
+                data.get("started_at"), data.get("ended_at"),
+                data.get("topic_summary"), data.get("queries_run", 0),
+                data.get("errors_hit", 0), data.get("satisfaction", "unknown"),
+                data.get("user_rating"), data.get("user_feedback"),
+                json.dumps(data.get("conversation", []), ensure_ascii=False, default=str),
+                data.get("ai_notes"),
+            ))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+@app.post("/api/end-session")
+async def end_session(request: Request):
+    """Called when user leaves or ends a session. AI summarizes and saves."""
+    body = await request.json()
+    session_id = body.get("session_id", "")
+    messages = body.get("messages", [])
+    client_ip = request.client.host if request.client else "unknown"
+
+    if not messages:
+        return {"status": "empty"}
+
+    # AI summarizes the session
+    summary = await summarize_session(messages)
+
+    session_data = {
+        "session_id": session_id,
+        "client_ip": client_ip,
+        "started_at": body.get("started_at"),
+        "ended_at": datetime.utcnow().isoformat(),
+        "topic_summary": summary.get("topic", ""),
+        "queries_run": summary.get("queries_run", 0),
+        "errors_hit": summary.get("errors_hit", 0),
+        "satisfaction": summary.get("satisfaction", "unknown"),
+        "conversation": messages,
+        "ai_notes": summary.get("improvement_notes", ""),
+    }
+
+    # Save in background thread to not block
+    import concurrent.futures
+    with concurrent.futures.ThreadPoolExecutor() as pool:
+        pool.submit(_save_session_sync, session_data)
+
+    return {"status": "saved", "session_id": session_id}
+
+
+@app.post("/api/feedback")
+async def feedback(request: Request):
+    """User submits rating and/or feedback for a session."""
+    body = await request.json()
+    session_id = body.get("session_id", "")
+    rating = body.get("rating")  # 1-5
+    text = body.get("feedback", "")
+
+    if not session_id:
+        return {"status": "error", "message": "no session_id"}
+
+    conn = psycopg2.connect(
+        host="localhost", port=5432, dbname="polymarket_db",
+        user="polymarket", password="polymarket123"
+    )
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE user_sessions
+                SET user_rating = %s, user_feedback = %s
+                WHERE session_id = %s
+            """, (rating, text, session_id))
+            if cur.rowcount == 0:
+                # Session not saved yet, create a minimal record
+                cur.execute("""
+                    INSERT INTO user_sessions (session_id, user_rating, user_feedback)
+                    VALUES (%s, %s, %s)
+                """, (session_id, rating, text))
+        conn.commit()
+    finally:
+        conn.close()
+
+    log_chat("user_feedback", {
+        "session_id": session_id,
+        "rating": rating,
+        "feedback": text,
+    })
+
+    return {"status": "saved"}

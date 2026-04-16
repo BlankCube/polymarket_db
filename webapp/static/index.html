@@ -44,6 +44,15 @@ tr:nth-child(even) td { background: #0f0f1a; }
 .error { background: #2a1515; border: 1px solid #5a2020; color: #ff8080; padding: 10px 14px; border-radius: 8px; margin: 8px 0; font-size: 13px; }
 
 .row-count { font-size: 12px; color: #666; margin-top: 4px; }
+
+.feedback-bar { display: flex; align-items: center; gap: 8px; padding: 10px 0; margin-top: 8px; border-top: 1px solid #2a2a3a; }
+.feedback-bar span { font-size: 12px; color: #666; }
+.feedback-bar button { background: #1a1a28; border: 1px solid #2a2a3a; border-radius: 6px; padding: 4px 12px; font-size: 12px; color: #888; cursor: pointer; }
+.feedback-bar button:hover { border-color: #7c8aff; color: #7c8aff; }
+.feedback-bar button.selected { border-color: #7c8aff; color: #7c8aff; background: #1e1e3a; }
+.feedback-input { display: none; margin-top: 6px; }
+.feedback-input textarea { width: 100%; background: #1a1a28; border: 1px solid #2a2a3a; border-radius: 6px; padding: 8px; color: #e0e0e0; font-size: 12px; resize: none; height: 60px; }
+.feedback-input button { margin-top: 4px; background: #7c8aff; border: none; border-radius: 6px; padding: 4px 16px; font-size: 12px; color: #fff; cursor: pointer; }
 </style>
 </head>
 <body>
@@ -74,6 +83,19 @@ const input = document.getElementById('input');
 const sendBtn = document.getElementById('sendBtn');
 let conversationHistory = [];
 let isStreaming = false;
+const sessionId = crypto.randomUUID();
+const sessionStartedAt = new Date().toISOString();
+
+// Save session when user leaves
+window.addEventListener('beforeunload', () => {
+  if (conversationHistory.length > 0) {
+    navigator.sendBeacon('/api/end-session', JSON.stringify({
+      session_id: sessionId,
+      messages: conversationHistory,
+      started_at: sessionStartedAt,
+    }));
+  }
+});
 
 function handleKey(e) {
   if (e.key === 'Enter' && !e.shiftKey) {
@@ -251,8 +273,8 @@ async function send() {
     textEl.textContent = 'Connection error: ' + err.message;
   }
 
-  // Clean the full text (remove <sql> tags) for conversation history
-  const cleanText = fullText.replace(/<sql>[\s\S]*?<\/sql>/g, '[SQL query executed]');
+  // Clean the full text for conversation history
+  const cleanText = fullText.replace(/<sql>[\s\S]*?<\/sql>/g, '[SQL query executed]').replace(/<python>[\s\S]*?<\/python>/g, '[Python executed]');
   if (cleanText.trim()) {
     conversationHistory.push({ role: 'assistant', content: cleanText });
   }
@@ -262,9 +284,62 @@ async function send() {
     conversationHistory = conversationHistory.slice(-20);
   }
 
+  // Add feedback bar
+  const fb = document.createElement('div');
+  fb.className = 'feedback-bar';
+  fb.innerHTML = `
+    <span>This helpful?</span>
+    <button onclick="rateFeedback(this, 'up')">👍</button>
+    <button onclick="rateFeedback(this, 'down')">👎</button>
+    <button onclick="showFeedbackInput(this)">Leave feedback</button>
+  `;
+  aiMsg.appendChild(fb);
+
   isStreaming = false;
   sendBtn.disabled = false;
   input.focus();
+}
+
+function rateFeedback(btn, type) {
+  const bar = btn.parentElement;
+  bar.querySelectorAll('button').forEach(b => b.classList.remove('selected'));
+  btn.classList.add('selected');
+  fetch('/api/feedback', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      session_id: sessionId,
+      rating: type === 'up' ? 5 : 1,
+    })
+  });
+}
+
+function showFeedbackInput(btn) {
+  const bar = btn.parentElement;
+  let fi = bar.nextElementSibling;
+  if (fi && fi.className === 'feedback-input') {
+    fi.style.display = fi.style.display === 'none' ? 'block' : 'none';
+    return;
+  }
+  fi = document.createElement('div');
+  fi.className = 'feedback-input';
+  fi.style.display = 'block';
+  fi.innerHTML = `<textarea placeholder="What could be better?"></textarea><button onclick="submitFeedback(this)">Submit</button>`;
+  bar.after(fi);
+}
+
+function submitFeedback(btn) {
+  const text = btn.previousElementSibling.value;
+  if (!text.trim()) return;
+  fetch('/api/feedback', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      session_id: sessionId,
+      feedback: text,
+    })
+  });
+  btn.parentElement.innerHTML = '<span style="color:#7c8aff;font-size:12px">Thanks for your feedback!</span>';
 }
 
 function renderText(el, text) {

@@ -146,9 +146,11 @@ async function loadHistory() {
     var d = await r.json();
     var list = $('sb-list');
     list.innerHTML = '';
+    var found = false;
     if(d.sessions){
       d.sessions.forEach(function(s){
         if(!s.session_id) return;
+        if(s.session_id===sid) found=true;
         var div = document.createElement('div');
         div.className = 'sb-item' + (s.session_id===sid?' active':'');
         var t = s.topic_summary || 'Untitled';
@@ -159,6 +161,14 @@ async function loadHistory() {
         list.appendChild(div);
       });
     }
+    // If current session not in DB yet, show it at top
+    if(!found && history.length > 0){
+      var cur = document.createElement('div');
+      cur.className = 'sb-item active';
+      var title = history[0] ? history[0].content.substring(0,40) : 'New chat';
+      cur.innerHTML = '<div class="title">'+esc(title)+'</div><div class="time">now</div>';
+      list.insertBefore(cur, list.firstChild);
+    }
   } catch(e) {}
 }
 
@@ -167,35 +177,47 @@ function newChat() {
   history = [];
   $('chat').innerHTML = '';
   $('examples').style.display = 'flex';
-  loadHistory();
+  // Add new chat to sidebar immediately and highlight it
+  var list = $('sb-list');
+  // Remove active from all
+  var items = list.querySelectorAll('.sb-item');
+  for(var i=0;i<items.length;i++) items[i].classList.remove('active');
+  // Insert at top
+  var div = document.createElement('div');
+  div.className = 'sb-item active';
+  div.setAttribute('data-sid', sid);
+  div.innerHTML = '<div class="title">New chat</div><div class="time">now</div>';
+  div.onclick = function(){ loadSession(sid); };
+  list.insertBefore(div, list.firstChild);
 }
 
 async function loadSession(id) {
-  try {
-    var r = await fetch('/api/sessions/'+id,{headers:hdr()});
-    var d = await r.json();
-    if(d.status!=='ok') return;
-    sid = d.session_id;
-    history = d.conversation || [];
-    // Rebuild chat UI
-    $('chat').innerHTML = '';
-    $('examples').style.display = 'none';
-    history.forEach(function(m){
-      var div = document.createElement('div');
-      div.className = 'msg '+(m.role==='user'?'user':'ai');
-      if(m.role==='user') {
-        div.textContent = m.content;
-      } else {
-        var t = document.createElement('div');
-        t.className = 'text';
-        t.textContent = m.content;
-        div.appendChild(t);
-      }
-      $('chat').appendChild(div);
-    });
-    $('chat').scrollTop = $('chat').scrollHeight;
-    loadHistory();
-  } catch(e) {}
+  var r = await fetch('/api/sessions/'+id,{headers:hdr()});
+  var d = await r.json();
+  if(d.status!=='ok'){alert('Failed to load session: '+d.message);return;}
+  sid = d.session_id;
+  var conv = d.conversation;
+  // Handle case where conversation might be a JSON string
+  if(typeof conv === 'string') conv = JSON.parse(conv);
+  history = conv || [];
+  $('chat').innerHTML = '';
+  $('examples').style.display = 'none';
+  for(var i=0;i<history.length;i++){
+    var m = history[i];
+    var div = document.createElement('div');
+    div.className = 'msg '+(m.role==='user'?'user':'ai');
+    if(m.role==='user'){
+      div.textContent = m.content;
+    } else {
+      var t = document.createElement('div');
+      t.className = 'text';
+      t.textContent = m.content;
+      div.appendChild(t);
+    }
+    $('chat').appendChild(div);
+  }
+  $('chat').scrollTop = $('chat').scrollHeight;
+  loadHistory();
 }
 
 function esc(s){var d=document.createElement('div');d.textContent=s;return d.innerHTML;}

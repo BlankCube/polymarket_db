@@ -193,12 +193,44 @@ async def process_chat(messages: list[dict], client_ip: str):
     yield "event: done\ndata: {}\n\n"
 
 
+def _save_messages(session_id, user_id, messages):
+    """Save conversation to DB immediately."""
+    if not session_id or not messages:
+        return
+    first_user_msg = next((m["content"][:80] for m in messages if m["role"] == "user"), "New conversation")
+    conn = psycopg2.connect(host="localhost", port=5432, dbname="polymarket_db",
+                            user="polymarket", password="polymarket123")
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO user_sessions (session_id, user_id, topic_summary, conversation, started_at, ended_at)
+                VALUES (%s, %s, %s, %s, NOW(), NOW())
+                ON CONFLICT (session_id) DO UPDATE SET
+                    conversation = EXCLUDED.conversation,
+                    ended_at = NOW(),
+                    topic_summary = EXCLUDED.topic_summary,
+                    user_id = COALESCE(EXCLUDED.user_id, user_sessions.user_id)
+            """, (session_id, user_id, first_user_msg,
+                  json.dumps(messages, ensure_ascii=False, default=str)))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+    finally:
+        conn.close()
+
+
 @app.post("/api/chat")
 async def chat(request: Request):
     body = await request.json()
     messages = body.get("messages", [])
     session_id = body.get("session_id", str(uuid.uuid4()))
     client_ip = request.client.host if request.client else "unknown"
+    user = get_user_from_request(request)
+    user_id = user["user_id"] if user else None
+
+    # messages contains full conversation history including previous AI replies.
+    # Save it now (user's latest message is the new one).
+    _save_messages(session_id, user_id, messages)
 
     return StreamingResponse(
         process_chat(messages, client_ip),
@@ -214,36 +246,11 @@ async def chat(request: Request):
 
 @app.post("/api/end-session")
 async def end_session(request: Request):
-    """Save conversation as-is. No AI summary, just store the messages."""
+    """Kept for sendBeacon on page close."""
     body = await request.json()
-    session_id = body.get("session_id", "")
-    messages = body.get("messages", [])
     user = get_user_from_request(request)
     user_id = user["user_id"] if user else body.get("user_id")
-
-    if not messages or not session_id:
-        return {"status": "empty"}
-
-    first_user_msg = next((m["content"][:80] for m in messages if m["role"] == "user"), "New conversation")
-
-    conn = psycopg2.connect(host="localhost", port=5432, dbname="polymarket_db",
-                            user="polymarket", password="polymarket123")
-    try:
-        with conn.cursor() as cur:
-            cur.execute("""
-                INSERT INTO user_sessions (session_id, user_id, topic_summary, conversation, started_at, ended_at)
-                VALUES (%s, %s, %s, %s, %s, NOW())
-                ON CONFLICT (session_id) DO UPDATE SET
-                    conversation = EXCLUDED.conversation,
-                    ended_at = NOW(),
-                    topic_summary = EXCLUDED.topic_summary,
-                    user_id = COALESCE(EXCLUDED.user_id, user_sessions.user_id)
-            """, (session_id, user_id, first_user_msg,
-                  json.dumps(messages, ensure_ascii=False, default=str),
-                  body.get("started_at")))
-        conn.commit()
-    finally:
-        conn.close()
+    _save_messages(body.get("session_id", ""), user_id, body.get("messages", []))
 
     return {"status": "saved", "session_id": session_id}
 

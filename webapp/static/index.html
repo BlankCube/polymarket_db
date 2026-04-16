@@ -244,28 +244,17 @@ async function resumeSession(sid) {
   loadSessions();
 }
 
-function saveSessionNow() {
-  if (conversationHistory.length === 0 || !token) return;
-  fetch('/api/end-session', {
-    method: 'POST', headers: authHeaders(),
-    body: JSON.stringify({session_id: sessionId, messages: conversationHistory, started_at: sessionStartedAt})
-  }).catch(function(){});
-}
-
-// Save on leave
+// Sessions are saved on every /api/chat call. sendBeacon is just a backup for the final AI response.
 window.addEventListener('beforeunload', function() {
   if (conversationHistory.length > 0) {
-    // Get user_id from token if possible
     var uid = null;
     try { if (token) uid = JSON.parse(atob(token.split('.')[1])).user_id; } catch(e) {}
     var blob = new Blob([JSON.stringify({
-      session_id: sessionId, messages: conversationHistory, started_at: sessionStartedAt, user_id: uid
+      session_id: sessionId, messages: conversationHistory, user_id: uid
     })], {type: 'application/json'});
     navigator.sendBeacon('/api/end-session', blob);
   }
 });
-// Periodic save
-setInterval(function() { saveSessionNow(); }, 30000);
 
 // === Chat functions (unchanged from working version) ===
 

@@ -38,20 +38,3 @@ async def execute_query(sql: str) -> tuple[list[str], list[list]]:
         return columns, [list(r.values()) for r in rows]
 
 
-async def get_schema_info() -> list[dict]:
-    """Get table and column info for the AI system prompt."""
-    async with _pool.acquire() as conn:
-        rows = await conn.fetch("""
-            SELECT
-                t.table_name,
-                c.column_name,
-                c.data_type,
-                c.is_nullable
-            FROM information_schema.tables t
-            JOIN information_schema.columns c
-                ON t.table_name = c.table_name AND t.table_schema = c.table_schema
-            WHERE t.table_schema = 'public'
-              AND t.table_type IN ('BASE TABLE', 'VIEW')
-            ORDER BY t.table_name, c.ordinal_position
-        """)
-        return [dict(r) for r in rows]

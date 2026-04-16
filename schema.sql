@@ -121,6 +121,33 @@ CREATE TABLE IF NOT EXISTS indexer_state (
     updated_at          TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Users (auth)
+CREATE TABLE IF NOT EXISTS users (
+    id              SERIAL PRIMARY KEY,
+    username        TEXT NOT NULL UNIQUE,
+    password_hash   TEXT NOT NULL,
+    display_name    TEXT,
+    created_at      TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- User sessions (conversation history + feedback)
+CREATE TABLE IF NOT EXISTS user_sessions (
+    id              SERIAL PRIMARY KEY,
+    session_id      TEXT NOT NULL UNIQUE,
+    user_id         INTEGER REFERENCES users(id),
+    client_ip       TEXT,
+    started_at      TIMESTAMPTZ DEFAULT NOW(),
+    ended_at        TIMESTAMPTZ,
+    topic_summary   TEXT,
+    queries_run     INTEGER DEFAULT 0,
+    errors_hit      INTEGER DEFAULT 0,
+    satisfaction    TEXT,
+    user_rating     SMALLINT,
+    user_feedback   TEXT,
+    conversation    JSONB,
+    ai_notes        TEXT
+);
+
 -- ============ INDEXES ============
 
 -- order_fills: the core table for backtesting queries
@@ -161,3 +188,10 @@ CREATE INDEX IF NOT EXISTS idx_markets_slug ON markets(slug);
 
 -- token_market_map
 CREATE INDEX IF NOT EXISTS idx_token_map_condition ON token_market_map(condition_id);
+
+-- user_sessions
+CREATE INDEX IF NOT EXISTS idx_sessions_user ON user_sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_time ON user_sessions(started_at);
+
+-- markets (category)
+CREATE INDEX IF NOT EXISTS idx_markets_category ON markets(category);

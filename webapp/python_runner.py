@@ -109,7 +109,7 @@ async def run_python(code: str) -> str:
 
         return result.strip() if result else "(no output)"
     except subprocess.TimeoutExpired:
-        return "Error: Code execution timed out (30s limit)"
+        return "Error: Code execution timed out (5 min limit)"
     finally:
         os.unlink(code_file)
         if os.path.exists(output_file):

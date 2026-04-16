@@ -2,14 +2,13 @@
 
 import json
 import uuid
-import asyncio
 import logging
 import psycopg2
 from datetime import datetime, date
 from decimal import Decimal
 from pathlib import Path
 from fastapi import FastAPI, Request
-from fastapi.responses import StreamingResponse, HTMLResponse, FileResponse
+from fastapi.responses import StreamingResponse, FileResponse
 
 from db_pool import init_pool, close_pool, execute_query
 from sql_safety import validate_and_limit
@@ -252,7 +251,7 @@ async def end_session(request: Request):
     user_id = user["user_id"] if user else body.get("user_id")
     _save_messages(body.get("session_id", ""), user_id, body.get("messages", []))
 
-    return {"status": "saved", "session_id": session_id}
+    return {"status": "saved"}
 
 
 @app.post("/api/feedback")

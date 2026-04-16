@@ -12,7 +12,8 @@ from fastapi.responses import StreamingResponse, FileResponse
 
 from db_pool import init_pool, close_pool, execute_query
 from sql_safety import validate_and_limit
-from ai import chat_stream, extract_sql, extract_python
+from ai import (step1_understand, step3_generate, step4_describe, step5_interpret,
+                extract_sql, extract_python)
 from python_runner import run_python
 from auth import register, login, get_user_from_request
 
@@ -73,121 +74,113 @@ def log_chat(event_type: str, data: dict, client_ip: str = ""):
     chat_logger.info(json.dumps(entry, ensure_ascii=False, default=str))
 
 
+def _is_confirmation(text: str) -> bool:
+    """Check if user message is a confirmation to proceed."""
+    t = text.strip().lower()
+    confirms = ['对', '没错', '查吧', '是的', '好', '好的', '可以', '行', '嗯', '确认',
+                 'yes', 'ok', 'go', 'sure', 'correct', 'right', 'yep', 'yeah', 'do it',
+                 'go ahead', 'proceed', 'confirm', 'y']
+    return t in confirms or len(t) <= 5 and any(c in t for c in confirms)
+
+
 async def process_chat(messages: list[dict], client_ip: str):
-    """Process a chat request: AI -> SQL -> execute -> AI interpret -> stream."""
+    """5-step AI interaction flow. User never sees code."""
 
-    # Log user message
     user_msg = messages[-1]["content"] if messages else ""
-    log_chat("user_query", {
-        "message": user_msg,
-        "history_length": len(messages),
-    }, client_ip)
+    log_chat("user_query", {"message": user_msg, "history_length": len(messages)}, client_ip)
 
-    full_response = ""
-    sql_query = None
+    # Detect if this is a confirmation of a previous understanding
+    is_confirm = len(messages) >= 2 and _is_confirmation(user_msg)
 
-    # Phase 1: Stream AI response (which may contain SQL)
-    async for event_type, data in chat_stream(messages):
-        if event_type == "text":
-            yield f"event: text\ndata: {json.dumps(data)}\n\n"
-        elif event_type == "full_response":
-            full_response = data
+    if not is_confirm:
+        # === STEP 1: Understand intent, stream to user ===
+        full_response = ""
+        stream = await step1_understand(messages)
+        async for event_type, data in stream:
+            if event_type == "text":
+                yield f"event: text\ndata: {json.dumps(data)}\n\n"
+            elif event_type == "full_response":
+                full_response = data
 
-    # Log AI response
-    log_chat("ai_response", {
-        "response": full_response[:2000],
-        "has_sql": "<sql>" in full_response,
-        "has_python": "<python>" in full_response,
-    }, client_ip)
-
-    # Phase 2: Execute SQL or Python if present
-    sql_query = extract_sql(full_response)
-    python_code = extract_python(full_response)
-
-    if not sql_query and not python_code:
+        log_chat("step1_understand", {"response": full_response[:2000]}, client_ip)
         yield "event: done\ndata: {}\n\n"
         return
 
-    result_summary = ""
+    # User confirmed. Get the AI's previous understanding from conversation.
+    prev_ai_msg = ""
+    for m in reversed(messages[:-1]):
+        if m["role"] == "assistant":
+            prev_ai_msg = m["content"]
+            break
 
-    if python_code:
-        # === Python execution path ===
-        try:
-            yield f"event: python\ndata: {json.dumps(python_code)}\n\n"
-            log_chat("python_execute", {"code": python_code[:2000]}, client_ip)
+    # === STEP 3: Generate code (hidden from user) ===
+    yield f"event: status\ndata: {json.dumps('Querying database...')}\n\n"
 
-            output = await run_python(python_code)
-            yield f"event: python_output\ndata: {json.dumps(output)}\n\n"
+    try:
+        code_response = await step3_generate(messages, prev_ai_msg)
+    except Exception as e:
+        yield f"event: error\ndata: {json.dumps({'error': f'Code generation failed: {e}'})}\n\n"
+        log_chat("error", {"type": "step3_generate", "error": str(e)}, client_ip)
+        yield "event: done\ndata: {}\n\n"
+        return
 
-            log_chat("python_result", {"output": output[:2000]}, client_ip)
-            result_summary = f"Python code output:\n{output}"
+    sql_code = extract_sql(code_response)
+    python_code = extract_python(code_response)
+    code = sql_code or python_code or ""
+    code_type = "sql" if sql_code else "python" if python_code else ""
 
-        except ValueError as e:
-            error_msg = f"Python validation error: {str(e)}"
-            yield f"event: error\ndata: {json.dumps({'error': error_msg})}\n\n"
-            log_chat("error", {"type": "python_validation", "error": str(e)}, client_ip)
-            yield "event: done\ndata: {}\n\n"
-            return
-        except Exception as e:
-            error_msg = f"Python error: {str(e)}"
-            yield f"event: error\ndata: {json.dumps({'error': error_msg})}\n\n"
-            log_chat("error", {"type": "python_execution", "error": str(e)}, client_ip)
-            yield "event: done\ndata: {}\n\n"
-            return
+    log_chat("step3_generate", {"type": code_type, "code": code[:2000]}, client_ip)
 
-    elif sql_query:
-        # === SQL execution path ===
-        try:
-            safe_sql = validate_and_limit(sql_query)
-            yield f"event: sql\ndata: {json.dumps(safe_sql)}\n\n"
-            log_chat("sql_execute", {"sql": safe_sql}, client_ip)
+    if not code:
+        yield f"event: error\ndata: {json.dumps({'error': 'Failed to generate query'})}\n\n"
+        yield "event: done\ndata: {}\n\n"
+        return
 
+    # === Execute the code ===
+    output = ""
+    try:
+        if sql_code:
+            safe_sql = validate_and_limit(sql_code)
             columns, rows = await execute_query(safe_sql)
-            yield f"event: columns\ndata: {json.dumps(columns)}\n\n"
+            # Format output as text for AI to interpret
+            output = f"Columns: {', '.join(columns)}\n"
+            output += f"Rows returned: {len(rows)}\n\n"
+            for row in rows[:50]:
+                output += " | ".join(str(json_serial(v)) for v in row) + "\n"
+            if len(rows) > 50:
+                output += f"... ({len(rows) - 50} more rows)\n"
+            log_chat("sql_result", {"row_count": len(rows)}, client_ip)
+        elif python_code:
+            output = await run_python(python_code)
+            log_chat("python_result", {"output": output[:2000]}, client_ip)
+    except Exception as e:
+        yield f"event: error\ndata: {json.dumps({'error': f'Query execution error: {e}'})}\n\n"
+        log_chat("error", {"type": "execution", "error": str(e), "code": code[:500]}, client_ip)
+        yield "event: done\ndata: {}\n\n"
+        return
 
-            for row in rows:
-                serialized = [json_serial(v) for v in row]
-                yield f"event: row\ndata: {json.dumps(serialized)}\n\n"
+    # === STEP 4: Describe what was queried (stream to user) ===
+    desc_text = ""
+    stream = await step4_describe(code, output, messages)
+    async for event_type, data in stream:
+        if event_type == "text":
+            yield f"event: text\ndata: {json.dumps(data)}\n\n"
+            desc_text += data
 
-            yield f"event: query_done\ndata: {json.dumps({'row_count': len(rows)})}\n\n"
-            log_chat("query_result", {"row_count": len(rows), "columns": columns}, client_ip)
+    log_chat("step4_describe", {"description": desc_text[:2000]}, client_ip)
 
-            result_summary = f"Query returned {len(rows)} rows.\n"
-            if rows:
-                display_rows = rows[:20]
-                result_summary += "Columns: " + ", ".join(columns) + "\n"
-                for row in display_rows:
-                    result_summary += " | ".join(str(json_serial(v)) for v in row) + "\n"
-                if len(rows) > 20:
-                    result_summary += f"... and {len(rows) - 20} more rows\n"
+    # Separator
+    yield f"event: text\ndata: {json.dumps(chr(10) + chr(10))}\n\n"
 
-        except ValueError as e:
-            yield f"event: error\ndata: {json.dumps({'error': f'SQL validation error: {str(e)}'})}\n\n"
-            log_chat("error", {"type": "validation", "error": str(e), "sql": sql_query}, client_ip)
-            yield "event: done\ndata: {}\n\n"
-            return
-        except Exception as e:
-            yield f"event: error\ndata: {json.dumps({'error': f'Query error: {str(e)}'})}\n\n"
-            log_chat("error", {"type": "execution", "error": str(e)}, client_ip)
-            yield "event: done\ndata: {}\n\n"
-            return
+    # === STEP 5: Interpret results (stream to user) ===
+    interp_text = ""
+    stream = await step5_interpret(code, output, messages)
+    async for event_type, data in stream:
+        if event_type == "text":
+            yield f"event: text\ndata: {json.dumps(data)}\n\n"
+            interp_text += data
 
-    # Phase 3: AI interprets results
-    if result_summary:
-        interpret_messages = messages + [
-            {"role": "assistant", "content": full_response},
-            {"role": "user", "content": f"Here are the results. Please analyze and interpret them:\n\n{result_summary}"}
-        ]
-
-        yield f"event: text\ndata: {json.dumps(chr(10) + chr(10) + '---' + chr(10) + chr(10))}\n\n"
-
-        interpret_text = ""
-        async for event_type, data in chat_stream(interpret_messages):
-            if event_type == "text":
-                yield f"event: text\ndata: {json.dumps(data)}\n\n"
-                interpret_text += data
-
-        log_chat("ai_interpretation", {"interpretation": interpret_text[:2000]}, client_ip)
+    log_chat("step5_interpret", {"interpretation": interp_text[:2000]}, client_ip)
 
     yield "event: done\ndata: {}\n\n"
 

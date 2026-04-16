@@ -303,9 +303,6 @@ async function send() {
   textEl.innerHTML = '<span class="thinking">Thinking...</span>';
 
   var fullText = '';
-  var currentTable = null;
-  var tableColumns = [];
-  var rowCount = 0;
 
   try {
     var resp = await fetch('/api/chat', {
@@ -341,67 +338,10 @@ async function send() {
 
           if (eventType === 'text') {
             fullText += data;
-            renderText(textEl, fullText);
+            textEl.textContent = fullText;
             scrollBottom();
-          } else if (eventType === 'sql') {
-            var sqlBlock = document.createElement('div');
-            sqlBlock.className = 'sql-block';
-            sqlBlock.textContent = data;
-            aiMsg.appendChild(sqlBlock);
-            scrollBottom();
-          } else if (eventType === 'python') {
-            var pyBlock = document.createElement('div');
-            pyBlock.className = 'sql-block';
-            pyBlock.style.borderColor = '#2d6a4f';
-            pyBlock.textContent = '# Python\n' + data;
-            aiMsg.appendChild(pyBlock);
-            scrollBottom();
-          } else if (eventType === 'python_output') {
-            var outBlock = document.createElement('div');
-            outBlock.className = 'sql-block';
-            outBlock.style.borderColor = '#444';
-            outBlock.style.color = '#a0d0a0';
-            outBlock.textContent = data;
-            aiMsg.appendChild(outBlock);
-            scrollBottom();
-          } else if (eventType === 'columns') {
-            tableColumns = data;
-            var wrap = document.createElement('div');
-            wrap.className = 'result-table-wrap';
-            var table = document.createElement('table');
-            var thead = document.createElement('thead');
-            var headerRow = document.createElement('tr');
-            data.forEach(function(col) {
-              var th = document.createElement('th');
-              th.textContent = col;
-              headerRow.appendChild(th);
-            });
-            thead.appendChild(headerRow);
-            table.appendChild(thead);
-            var tbody = document.createElement('tbody');
-            table.appendChild(tbody);
-            wrap.appendChild(table);
-            aiMsg.appendChild(wrap);
-            currentTable = tbody;
-            rowCount = 0;
-            scrollBottom();
-          } else if (eventType === 'row') {
-            if (currentTable && rowCount < 200) {
-              var tr = document.createElement('tr');
-              data.forEach(function(val) {
-                var td = document.createElement('td');
-                td.textContent = val === null ? 'NULL' : val;
-                tr.appendChild(td);
-              });
-              currentTable.appendChild(tr);
-              rowCount++;
-            }
-          } else if (eventType === 'query_done') {
-            var countDiv = document.createElement('div');
-            countDiv.className = 'row-count';
-            countDiv.textContent = data.row_count + ' rows returned';
-            aiMsg.appendChild(countDiv);
-            currentTable = null;
+          } else if (eventType === 'status') {
+            textEl.innerHTML = '<span class="thinking">' + data + '</span>';
             scrollBottom();
           } else if (eventType === 'error') {
             var errDiv = document.createElement('div');
@@ -418,13 +358,11 @@ async function send() {
     textEl.textContent = 'Connection error: ' + err.message;
   }
 
-  // Clean text for history
-  var cleanText = fullText.replace(/<sql>[\s\S]*?<\/sql>/g, '[SQL query executed]').replace(/<python>[\s\S]*?<\/python>/g, '[Python executed]');
-  if (cleanText.trim()) {
-    conversationHistory.push({ role: 'assistant', content: cleanText });
+  if (fullText.trim()) {
+    conversationHistory.push({ role: 'assistant', content: fullText });
   }
-  if (conversationHistory.length > 20) {
-    conversationHistory = conversationHistory.slice(-20);
+  if (conversationHistory.length > 40) {
+    conversationHistory = conversationHistory.slice(-40);
   }
 
   // Feedback bar
@@ -465,10 +403,6 @@ function submitFeedback(btn) {
   btn.parentElement.innerHTML = '<span style="color:#7c8aff;font-size:12px">Thanks!</span>';
 }
 
-function renderText(el, text) {
-  var cleaned = text.replace(/<sql>[\s\S]*?<\/sql>/g, '').replace(/<python>[\s\S]*?<\/python>/g, '');
-  el.textContent = cleaned;
-}
 
 // === Init ===
 if (token) {

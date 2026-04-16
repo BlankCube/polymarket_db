@@ -257,6 +257,8 @@ async def end_session(request: Request):
     messages = body.get("messages", [])
     client_ip = request.client.host if request.client else "unknown"
     user = get_user_from_request(request)
+    # Fallback: get user_id from body (for sendBeacon which can't set auth headers)
+    user_id = user["user_id"] if user else body.get("user_id")
 
     if not messages:
         return {"status": "empty"}
@@ -266,7 +268,7 @@ async def end_session(request: Request):
 
     session_data = {
         "session_id": session_id,
-        "user_id": user["user_id"] if user else None,
+        "user_id": user_id,
         "client_ip": client_ip,
         "started_at": body.get("started_at"),
         "ended_at": datetime.utcnow().isoformat(),

@@ -1,0 +1,96 @@
+INFO:     Started server process [345776]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8080 (Press CTRL+C to quit)
+INFO:     127.0.0.1:49392 - "GET / HTTP/1.1" 200 OK
+INFO:     136.52.127.66:54915 - "GET / HTTP/1.1" 200 OK
+INFO:     136.52.127.66:54915 - "GET /favicon.ico HTTP/1.1" 404 Not Found
+INFO:     136.52.127.66:54914 - "POST /api/chat HTTP/1.1" 200 OK
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [345776]
+INFO:     Started server process [346577]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8080 (Press CTRL+C to quit)
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [346577]
+INFO:     Started server process [346890]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8080 (Press CTRL+C to quit)
+INFO:     136.52.127.66:55020 - "GET / HTTP/1.1" 200 OK
+INFO:     136.52.127.66:55050 - "POST /api/chat HTTP/1.1" 200 OK
+INFO:     136.52.127.66:55060 - "POST /api/chat HTTP/1.1" 200 OK
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [346890]
+INFO:     Started server process [347241]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8080 (Press CTRL+C to quit)
+INFO:     151.115.74.123:57822 - "GET /login HTTP/1.1" 404 Not Found
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [347241]
+INFO:     Started server process [348223]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8080 (Press CTRL+C to quit)
+INFO:     136.52.127.66:56525 - "GET / HTTP/1.1" 200 OK
+INFO:     136.52.127.66:56526 - "POST /api/chat HTTP/1.1" 200 OK
+INFO:     136.52.127.66:56537 - "POST /api/chat HTTP/1.1" 200 OK
+INFO:     136.52.127.66:56547 - "POST /api/chat HTTP/1.1" 200 OK
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [348223]
+INFO:     Started server process [350822]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8080 (Press CTRL+C to quit)
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [350822]
+INFO:     Started server process [351215]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8080 (Press CTRL+C to quit)
+INFO:     2.27.9.217:35920 - "GET /login HTTP/1.1" 404 Not Found
+INFO:     136.52.127.66:56736 - "GET / HTTP/1.1" 200 OK
+INFO:     136.52.127.66:56737 - "POST /api/chat HTTP/1.1" 200 OK
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [351215]
+INFO:     Started server process [351593]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8080 (Press CTRL+C to quit)
+INFO:     136.52.127.66:57217 - "GET / HTTP/1.1" 200 OK
+INFO:     136.52.127.66:57218 - "POST /api/chat HTTP/1.1" 200 OK
+INFO:     136.52.127.66:57260 - "POST /api/chat HTTP/1.1" 200 OK
+INFO:     136.52.127.66:57269 - "POST /api/chat HTTP/1.1" 200 OK
+INFO:     136.52.127.66:57271 - "POST /api/chat HTTP/1.1" 200 OK
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [351593]
+INFO:     Started server process [352353]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8080 (Press CTRL+C to quit)
+INFO:     51.158.184.150:60350 - "GET /login HTTP/1.1" 404 Not Found
+INFO:     51.158.165.74:56050 - "GET /login HTTP/1.1" 404 Not Found
+INFO:     136.52.127.66:57973 - "GET / HTTP/1.1" 200 OK
+INFO:     136.52.127.66:57973 - "POST /api/chat HTTP/1.1" 200 OK
+INFO:     136.52.127.66:58054 - "POST /api/chat HTTP/1.1" 200 OK
+INFO:     136.52.127.66:58103 - "POST /api/chat HTTP/1.1" 200 OK
+INFO:     136.52.127.66:58160 - "POST /api/chat HTTP/1.1" 200 OK
+INFO:     136.52.127.66:58162 - "POST /api/chat HTTP/1.1" 200 OK

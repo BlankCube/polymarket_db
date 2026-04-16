@@ -1,0 +1,180 @@
+Indexing CT events from block 44020001 to 85042596 (41022595 blocks)
+  Error at blocks 44020001-44030000: insert or update on table "resolutions" violates foreign key constraint "resolutions_condition_id_fkey"
+DETAIL:  Key (condition_id)=(0xed65addb5390c14b75158647f6b6dace012ef44b6a93ca936704545536dffa36) is not present in table "markets".
+
+  Error at blocks 44030001-44040000: current transaction is aborted, commands ignored until end of transaction block
+
+  Error at blocks 44040001-44050000: current transaction is aborted, commands ignored until end of transaction block
+
+  Error at blocks 44050001-44060000: current transaction is aborted, commands ignored until end of transaction block
+
+  Error at blocks 44060001-44070000: current transaction is aborted, commands ignored until end of transaction block
+
+  Error at blocks 44070001-44080000: current transaction is aborted, commands ignored until end of transaction block
+
+  Error at blocks 44080001-44090000: current transaction is aborted, commands ignored until end of transaction block
+
+  Error at blocks 44090001-44100000: current transaction is aborted, commands ignored until end of transaction block
+
+  Error at blocks 44100001-44110000: current transaction is aborted, commands ignored until end of transaction block
+
+  Error at blocks 44110001-44120000: current transaction is aborted, commands ignored until end of transaction block
+
+  Error at blocks 44120001-44130000: current transaction is aborted, commands ignored until end of transaction block
+
+  Error at blocks 44130001-44140000: current transaction is aborted, commands ignored until end of transaction block
+
+  Error at blocks 44140001-44150000: current transaction is aborted, commands ignored until end of transaction block
+
+  Error at blocks 44150001-44160000: current transaction is aborted, commands ignored until end of transaction block
+
+Indexing CT events from block 44020001 to 85042627 (41022626 blocks)
+  [CT] Block 44030000/85042627 (0.0%) | resolutions=9 redemptions=8
+  [CT] Block 44040000/85042627 (0.0%) | resolutions=9 redemptions=20
+  [CT] Block 44050000/85042627 (0.1%) | resolutions=11 redemptions=23
+  [CT] Block 44060000/85042627 (0.1%) | resolutions=11 redemptions=31
+  [CT] Block 44300000/85042627 (0.7%) | resolutions=87 redemptions=510
+  [CT] Block 44310000/85042627 (0.7%) | resolutions=87 redemptions=530
+  [CT] Block 44320000/85042627 (0.7%) | resolutions=87 redemptions=544
+  [CT] Block 44330000/85042627 (0.8%) | resolutions=87 redemptions=549
+  [CT] Block 44380000/85042627 (0.9%) | resolutions=105 redemptions=830
+  [CT] Block 44390000/85042627 (0.9%) | resolutions=107 redemptions=862
+  [CT] Block 44400000/85042627 (0.9%) | resolutions=107 redemptions=908
+  [CT] Block 44410000/85042627 (1.0%) | resolutions=108 redemptions=953
+  [CT] Block 44440000/85042627 (1.0%) | resolutions=118 redemptions=1002
+  [CT] Block 44450000/85042627 (1.0%) | resolutions=118 redemptions=1012
+  [CT] Block 44460000/85042627 (1.1%) | resolutions=127 redemptions=1025
+  [CT] Block 44470000/85042627 (1.1%) | resolutions=127 redemptions=1034
+  [CT] Block 44480000/85042627 (1.1%) | resolutions=127 redemptions=1045
+  [CT] Block 44580000/85042627 (1.4%) | resolutions=178 redemptions=1516
+  [CT] Block 44590000/85042627 (1.4%) | resolutions=182 redemptions=1546
+  [CT] Block 44650000/85042627 (1.5%) | resolutions=201 redemptions=1915
+  [CT] Block 44660000/85042627 (1.6%) | resolutions=201 redemptions=1944
+  [CT] Block 44670000/85042627 (1.6%) | resolutions=201 redemptions=1961
+  [CT] Block 44680000/85042627 (1.6%) | resolutions=204 redemptions=1990
+  [CT] Block 44690000/85042627 (1.6%) | resolutions=204 redemptions=2008
+  [CT] Block 44700000/85042627 (1.7%) | resolutions=204 redemptions=2033
+  [CT] Block 44710000/85042627 (1.7%) | resolutions=204 redemptions=2042
+  [CT] Block 44720000/85042627 (1.7%) | resolutions=204 redemptions=2057
+  [CT] Block 44730000/85042627 (1.7%) | resolutions=204 redemptions=2098
+  [CT] Block 44740000/85042627 (1.8%) | resolutions=204 redemptions=2119
+  [CT] Block 44750000/85042627 (1.8%) | resolutions=205 redemptions=2133
+  [CT] Block 44760000/85042627 (1.8%) | resolutions=205 redemptions=2152
+  [CT] Block 44770000/85042627 (1.8%) | resolutions=205 redemptions=2176
+  [CT] Block 44780000/85042627 (1.9%) | resolutions=205 redemptions=2198
+  [CT] Block 44790000/85042627 (1.9%) | resolutions=205 redemptions=2219
+  [CT] Block 44800000/85042627 (1.9%) | resolutions=205 redemptions=2229
+  [CT] Block 44810000/85042627 (1.9%) | resolutions=205 redemptions=2240
+  [CT] Block 44820000/85042627 (2.0%) | resolutions=206 redemptions=2253
+  [CT] Block 44830000/85042627 (2.0%) | resolutions=207 redemptions=2275
+  [CT] Block 44950000/85042627 (2.3%) | resolutions=220 redemptions=2538
+  [CT] Block 45100000/85042627 (2.6%) | resolutions=234 redemptions=3015
+  [CT] Block 45110000/85042627 (2.7%) | resolutions=234 redemptions=3034
+  [CT] Block 45210000/85042627 (2.9%) | resolutions=244 redemptions=3505
+  [CT] Block 45220000/85042627 (2.9%) | resolutions=246 redemptions=3536
+  [CT] Block 45660000/85042627 (4.0%) | resolutions=270 redemptions=5006
+  [CT] Block 45670000/85042627 (4.0%) | resolutions=271 redemptions=5021
+  [CT] Block 45680000/85042627 (4.0%) | resolutions=271 redemptions=5028
+  [CT] Block 45690000/85042627 (4.1%) | resolutions=272 redemptions=5044
+  [CT] Block 45790000/85042627 (4.3%) | resolutions=296 redemptions=5504
+  [CT] Block 45920000/85042627 (4.6%) | resolutions=304 redemptions=5912
+  [CT] Block 45930000/85042627 (4.7%) | resolutions=304 redemptions=5969
+  [CT] Block 45940000/85042627 (4.7%) | resolutions=305 redemptions=6001
+  [CT] Block 45950000/85042627 (4.7%) | resolutions=305 redemptions=6059
+  [CT] Block 45960000/85042627 (4.7%) | resolutions=305 redemptions=6072
+  [CT] Block 45970000/85042627 (4.8%) | resolutions=306 redemptions=6094
+  [CT] Block 45980000/85042627 (4.8%) | resolutions=306 redemptions=6128
+  [CT] Block 45990000/85042627 (4.8%) | resolutions=307 redemptions=6185
+  [CT] Block 46000000/85042627 (4.8%) | resolutions=307 redemptions=6212
+  [CT] Block 46010000/85042627 (4.9%) | resolutions=308 redemptions=6238
+  [CT] Block 46020000/85042627 (4.9%) | resolutions=308 redemptions=6297
+  [CT] Block 46030000/85042627 (4.9%) | resolutions=308 redemptions=6321
+  [CT] Block 46070000/85042627 (5.0%) | resolutions=311 redemptions=6503
+  [CT] Block 46080000/85042627 (5.0%) | resolutions=311 redemptions=6518
+  [CT] Block 46090000/85042627 (5.0%) | resolutions=312 redemptions=6525
+  [CT] Block 46340000/85042627 (5.7%) | resolutions=329 redemptions=7041
+  [CT] Block 46550000/85042627 (6.2%) | resolutions=351 redemptions=7530
+  [CT] Block 46770000/85042627 (6.7%) | resolutions=403 redemptions=8933
+  [CT] Block 46780000/85042627 (6.7%) | resolutions=403 redemptions=8973
+  [CT] Block 46790000/85042627 (6.8%) | resolutions=403 redemptions=8991
+  [CT] Block 46800000/85042627 (6.8%) | resolutions=403 redemptions=9009
+  [CT] Block 46810000/85042627 (6.8%) | resolutions=403 redemptions=9013
+  [CT] Block 46820000/85042627 (6.8%) | resolutions=403 redemptions=9036
+  [CT] Block 46830000/85042627 (6.8%) | resolutions=403 redemptions=9051
+  [CT] Block 46840000/85042627 (6.9%) | resolutions=403 redemptions=9075
+  [CT] Block 47070000/85042627 (7.4%) | resolutions=470 redemptions=10006
+  [CT] Block 47080000/85042627 (7.5%) | resolutions=471 redemptions=10040
+  [CT] Block 47270000/85042627 (7.9%) | resolutions=477 redemptions=10505
+  [CT] Block 47280000/85042627 (7.9%) | resolutions=477 redemptions=10519
+  [CT] Block 47290000/85042627 (8.0%) | resolutions=479 redemptions=10522
+  [CT] Block 47300000/85042627 (8.0%) | resolutions=479 redemptions=10529
+  [CT] Block 47400000/85042627 (8.2%) | resolutions=501 redemptions=10671
+  [CT] Block 47410000/85042627 (8.3%) | resolutions=502 redemptions=10685
+  [CT] Block 47420000/85042627 (8.3%) | resolutions=502 redemptions=10780
+  [CT] Block 47430000/85042627 (8.3%) | resolutions=502 redemptions=10853
+  [CT] Block 47440000/85042627 (8.3%) | resolutions=505 redemptions=10903
+  [CT] Block 47450000/85042627 (8.4%) | resolutions=506 redemptions=10930
+  [CT] Block 47460000/85042627 (8.4%) | resolutions=506 redemptions=10951
+  [CT] Block 47470000/85042627 (8.4%) | resolutions=506 redemptions=10984
+  [CT] Block 47480000/85042627 (8.4%) | resolutions=506 redemptions=10988
+  [CT] Block 47490000/85042627 (8.5%) | resolutions=507 redemptions=10998
+  [CT] Block 47500000/85042627 (8.5%) | resolutions=507 redemptions=11010
+  [CT] Block 47510000/85042627 (8.5%) | resolutions=507 redemptions=11025
+  [CT] Block 47520000/85042627 (8.5%) | resolutions=507 redemptions=11030
+  [CT] Block 47530000/85042627 (8.6%) | resolutions=508 redemptions=11039
+  [CT] Block 47540000/85042627 (8.6%) | resolutions=508 redemptions=11067
+  [CT] Block 47550000/85042627 (8.6%) | resolutions=508 redemptions=11084
+  [CT] Block 47560000/85042627 (8.6%) | resolutions=509 redemptions=11099
+  [CT] Block 47570000/85042627 (8.7%) | resolutions=509 redemptions=11107
+  [CT] Block 47580000/85042627 (8.7%) | resolutions=509 redemptions=11121
+  [CT] Block 47590000/85042627 (8.7%) | resolutions=509 redemptions=11128
+  [CT] Block 47600000/85042627 (8.7%) | resolutions=509 redemptions=11131
+  [CT] Block 47790000/85042627 (9.2%) | resolutions=533 redemptions=11535
+  [CT] Block 48010000/85042627 (9.7%) | resolutions=560 redemptions=12020
+  [CT] Block 48140000/85042627 (10.0%) | resolutions=580 redemptions=12514
+  [CT] Block 48150000/85042627 (10.1%) | resolutions=580 redemptions=12531
+  [CT] Block 48160000/85042627 (10.1%) | resolutions=583 redemptions=12532
+  [CT] Block 48170000/85042627 (10.1%) | resolutions=589 redemptions=12535
+  [CT] Block 48240000/85042627 (10.3%) | resolutions=646 redemptions=13017
+  [CT] Block 48440000/85042627 (10.8%) | resolutions=669 redemptions=14006
+  [CT] Block 48450000/85042627 (10.8%) | resolutions=676 redemptions=14023
+  [CT] Block 48460000/85042627 (10.8%) | resolutions=676 redemptions=14026
+  [CT] Block 48470000/85042627 (10.8%) | resolutions=677 redemptions=14038
+  [CT] Block 48520000/85042627 (11.0%) | resolutions=702 redemptions=14216
+  [CT] Block 48530000/85042627 (11.0%) | resolutions=702 redemptions=14277
+  [CT] Block 48540000/85042627 (11.0%) | resolutions=705 redemptions=14319
+  [CT] Block 48550000/85042627 (11.0%) | resolutions=705 redemptions=14340
+  [CT] Block 48560000/85042627 (11.1%) | resolutions=705 redemptions=14361
+  [CT] Block 48570000/85042627 (11.1%) | resolutions=706 redemptions=14376
+  [CT] Block 48580000/85042627 (11.1%) | resolutions=708 redemptions=14409
+  [CT] Block 48590000/85042627 (11.1%) | resolutions=709 redemptions=14422
+  [CT] Block 48600000/85042627 (11.2%) | resolutions=709 redemptions=14444
+  [CT] Block 48610000/85042627 (11.2%) | resolutions=709 redemptions=14466
+  [CT] Block 48650000/85042627 (11.3%) | resolutions=710 redemptions=14504
+  [CT] Block 48660000/85042627 (11.3%) | resolutions=711 redemptions=14518
+  [CT] Block 48670000/85042627 (11.3%) | resolutions=711 redemptions=14530
+  [CT] Block 48680000/85042627 (11.4%) | resolutions=713 redemptions=14538
+  [CT] Block 48810000/85042627 (11.7%) | resolutions=752 redemptions=15521
+  [CT] Block 48890000/85042627 (11.9%) | resolutions=762 redemptions=16009
+  [CT] Block 49000000/85042627 (12.1%) | resolutions=770 redemptions=16503
+  [CT] Block 49090000/85042627 (12.4%) | resolutions=800 redemptions=16970
+  [CT] Block 49100000/85042627 (12.4%) | resolutions=800 redemptions=17016
+  [CT] Block 49110000/85042627 (12.4%) | resolutions=800 redemptions=17055
+  [CT] Block 49120000/85042627 (12.4%) | resolutions=800 redemptions=17067
+  [CT] Block 49130000/85042627 (12.5%) | resolutions=802 redemptions=17078
+  [CT] Block 49140000/85042627 (12.5%) | resolutions=804 redemptions=17089
+  [CT] Block 49200000/85042627 (12.6%) | resolutions=829 redemptions=17518
+  [CT] Block 49370000/85042627 (13.0%) | resolutions=902 redemptions=18010
+  [CT] Block 49380000/85042627 (13.1%) | resolutions=902 redemptions=18038
+  [CT] Block 49390000/85042627 (13.1%) | resolutions=903 redemptions=18083
+  [CT] Block 49400000/85042627 (13.1%) | resolutions=905 redemptions=18145
+  [CT] Block 49430000/85042627 (13.2%) | resolutions=921 redemptions=18525
+  [CT] Block 49530000/85042627 (13.4%) | resolutions=958 redemptions=19019
+  [CT] Block 49650000/85042627 (13.7%) | resolutions=1001 redemptions=19432
+  [CT] Block 49660000/85042627 (13.7%) | resolutions=1003 redemptions=19479
+  [CT] Block 49670000/85042627 (13.8%) | resolutions=1006 redemptions=19540
+  [CT] Block 49680000/85042627 (13.8%) | resolutions=1006 redemptions=19575
+  [CT] Block 49750000/85042627 (14.0%) | resolutions=1033 redemptions=20033
+  [CT] Block 49920000/85042627 (14.4%) | resolutions=1080 redemptions=20549
+  [CT] Block 50010000/85042627 (14.6%) | resolutions=1109 redemptions=20804
+  [CT] Block 50090000/85042627 (14.8%) | resolutions=1128 redemptions=21046

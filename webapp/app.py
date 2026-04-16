@@ -13,7 +13,7 @@ from fastapi.responses import StreamingResponse, HTMLResponse, FileResponse
 
 from db_pool import init_pool, close_pool, execute_query
 from sql_safety import validate_and_limit
-from ai import chat_stream, extract_sql, extract_python, summarize_session
+from ai import chat_stream, extract_sql, extract_python
 from python_runner import run_python
 from auth import register, login, get_user_from_request
 
@@ -211,79 +211,39 @@ async def chat(request: Request):
     )
 
 
-def _save_session_sync(data: dict):
-    """Save session to DB (sync, called from background)."""
-    conn = psycopg2.connect(
-        host="localhost", port=5432, dbname="polymarket_db",
-        user="polymarket", password="polymarket123"
-    )
-    try:
-        with conn.cursor() as cur:
-            cur.execute("""
-                INSERT INTO user_sessions
-                (session_id, user_id, client_ip, started_at, ended_at,
-                 topic_summary, queries_run, errors_hit, satisfaction,
-                 user_rating, user_feedback, conversation, ai_notes)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (session_id) DO UPDATE SET
-                    user_id = COALESCE(EXCLUDED.user_id, user_sessions.user_id),
-                    ended_at = EXCLUDED.ended_at,
-                    topic_summary = EXCLUDED.topic_summary,
-                    queries_run = EXCLUDED.queries_run,
-                    errors_hit = EXCLUDED.errors_hit,
-                    satisfaction = EXCLUDED.satisfaction,
-                    conversation = EXCLUDED.conversation,
-                    ai_notes = EXCLUDED.ai_notes
-            """, (
-                data["session_id"], data.get("user_id"),
-                data.get("client_ip"),
-                data.get("started_at"), data.get("ended_at"),
-                data.get("topic_summary"), data.get("queries_run", 0),
-                data.get("errors_hit", 0), data.get("satisfaction", "unknown"),
-                data.get("user_rating"), data.get("user_feedback"),
-                json.dumps(data.get("conversation", []), ensure_ascii=False, default=str),
-                data.get("ai_notes"),
-            ))
-        conn.commit()
-    finally:
-        conn.close()
-
 
 @app.post("/api/end-session")
 async def end_session(request: Request):
-    """Called when user leaves or ends a session. AI summarizes and saves."""
+    """Save conversation as-is. No AI summary, just store the messages."""
     body = await request.json()
     session_id = body.get("session_id", "")
     messages = body.get("messages", [])
-    client_ip = request.client.host if request.client else "unknown"
     user = get_user_from_request(request)
-    # Fallback: get user_id from body (for sendBeacon which can't set auth headers)
     user_id = user["user_id"] if user else body.get("user_id")
 
-    if not messages:
+    if not messages or not session_id:
         return {"status": "empty"}
 
-    # AI summarizes the session
-    summary = await summarize_session(messages)
+    first_user_msg = next((m["content"][:80] for m in messages if m["role"] == "user"), "New conversation")
 
-    session_data = {
-        "session_id": session_id,
-        "user_id": user_id,
-        "client_ip": client_ip,
-        "started_at": body.get("started_at"),
-        "ended_at": datetime.utcnow().isoformat(),
-        "topic_summary": summary.get("topic", ""),
-        "queries_run": summary.get("queries_run", 0),
-        "errors_hit": summary.get("errors_hit", 0),
-        "satisfaction": summary.get("satisfaction", "unknown"),
-        "conversation": messages,
-        "ai_notes": summary.get("improvement_notes", ""),
-    }
-
-    # Save in background thread to not block
-    import concurrent.futures
-    with concurrent.futures.ThreadPoolExecutor() as pool:
-        pool.submit(_save_session_sync, session_data)
+    conn = psycopg2.connect(host="localhost", port=5432, dbname="polymarket_db",
+                            user="polymarket", password="polymarket123")
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO user_sessions (session_id, user_id, topic_summary, conversation, started_at, ended_at)
+                VALUES (%s, %s, %s, %s, %s, NOW())
+                ON CONFLICT (session_id) DO UPDATE SET
+                    conversation = EXCLUDED.conversation,
+                    ended_at = NOW(),
+                    topic_summary = EXCLUDED.topic_summary,
+                    user_id = COALESCE(EXCLUDED.user_id, user_sessions.user_id)
+            """, (session_id, user_id, first_user_msg,
+                  json.dumps(messages, ensure_ascii=False, default=str),
+                  body.get("started_at")))
+        conn.commit()
+    finally:
+        conn.close()
 
     return {"status": "saved", "session_id": session_id}
 

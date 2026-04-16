@@ -106,10 +106,10 @@ tr:nth-child(even) td { background: #0f0f1a; }
 </div>
 
 <div class="examples">
-  <div class="example-chip" onclick="askExample(this)">在事件截止后买0.99，历史上赚钱吗？</div>
-  <div class="example-chip" onclick="askExample(this)">2024大选中谁是最大的鲸鱼？</div>
-  <div class="example-chip" onclick="askExample(this)">哪些市场结果出乎意料？有人因此巨亏吗？</div>
-  <div class="example-chip" onclick="askExample(this)">Which markets had the most trading after their deadline?</div>
+  <div class="example-chip" onclick="askExample(this)">有人在结果已定后还高价买错了方向吗？亏了多少？</div>
+  <div class="example-chip" onclick="askExample(this)">Trump大选市场里投入最多的地址，他最终赚了还是亏了？</div>
+  <div class="example-chip" onclick="askExample(this)">What does the data say about buying at 0.99 after the event deadline?</div>
+  <div class="example-chip" onclick="askExample(this)">哪个市场的结算结果最出人意料？</div>
 </div>
 
 <div class="chat-container" id="chat"></div>
@@ -265,7 +265,7 @@ window.addEventListener('beforeunload', function() {
   }
 });
 // Periodic save
-setInterval(function() { saveSessionNow(); }, 120000);
+setInterval(function() { saveSessionNow(); }, 30000);
 
 // === Chat functions (unchanged from working version) ===
 

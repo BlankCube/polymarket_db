@@ -34,9 +34,9 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 .sb-item { padding: 10px 12px; border-radius: 8px; cursor: pointer; margin-bottom: 2px; }
 .sb-item:hover { background: #1a1a28; }
 .sb-item.active { background: #1a1a30; border: 1px solid #2a2a5a; }
-.sb-item .title { font-size: 13px; color: #ccc; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sb-item .title { font-size: 13px; color: #ccc; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
 .sb-item.active .title { color: #7c8aff; }
-.sb-item .time { font-size: 11px; color: #555; margin-top: 3px; }
+.sb-item .time { font-size: 11px; color: #555; margin-top: 3px; pointer-events: none; }
 .sb-bottom { padding: 10px 14px; border-top: 1px solid #1e1e2e; display: flex; justify-content: space-between; align-items: center; }
 .sb-bottom span { font-size: 13px; color: #888; }
 .sb-bottom button { background: none; border: none; color: #666; cursor: pointer; font-size: 12px; }
@@ -191,33 +191,35 @@ function newChat() {
   list.insertBefore(div, list.firstChild);
 }
 
-async function loadSession(id) {
-  var r = await fetch('/api/sessions/'+id,{headers:hdr()});
-  var d = await r.json();
-  if(d.status!=='ok'){alert('Failed to load session: '+d.message);return;}
-  sid = d.session_id;
-  var conv = d.conversation;
-  // Handle case where conversation might be a JSON string
-  if(typeof conv === 'string') conv = JSON.parse(conv);
-  history = conv || [];
-  $('chat').innerHTML = '';
-  $('examples').style.display = 'none';
-  for(var i=0;i<history.length;i++){
-    var m = history[i];
-    var div = document.createElement('div');
-    div.className = 'msg '+(m.role==='user'?'user':'ai');
-    if(m.role==='user'){
-      div.textContent = m.content;
-    } else {
-      var t = document.createElement('div');
-      t.className = 'text';
-      t.textContent = m.content;
-      div.appendChild(t);
-    }
-    $('chat').appendChild(div);
-  }
-  $('chat').scrollTop = $('chat').scrollHeight;
-  loadHistory();
+function loadSession(id) {
+  fetch('/api/sessions/'+id,{headers:hdr()})
+    .then(function(r){return r.json()})
+    .then(function(d){
+      if(d.status!=='ok') return;
+      sid = d.session_id;
+      var conv = d.conversation;
+      if(typeof conv === 'string') conv = JSON.parse(conv);
+      history = conv || [];
+      var c = $('chat');
+      c.innerHTML = '';
+      $('examples').style.display = 'none';
+      for(var i=0;i<history.length;i++){
+        var m = history[i];
+        var div = document.createElement('div');
+        div.className = 'msg '+(m.role==='user'?'user':'ai');
+        if(m.role==='user'){
+          div.textContent = m.content;
+        } else {
+          var t = document.createElement('div');
+          t.className = 'text';
+          t.textContent = m.content;
+          div.appendChild(t);
+        }
+        c.appendChild(div);
+      }
+      c.scrollTop = c.scrollHeight;
+      loadHistory();
+    });
 }
 
 function esc(s){var d=document.createElement('div');d.textContent=s;return d.innerHTML;}

@@ -95,7 +95,7 @@ async def process_chat(messages: list[dict], client_ip: str):
     if not is_confirm:
         # === STEP 1: Understand intent, stream to user ===
         full_response = ""
-        stream = await step1_understand(messages)
+        stream = step1_understand(messages)
         async for event_type, data in stream:
             if event_type == "text":
                 yield f"event: text\ndata: {json.dumps(data)}\n\n"
@@ -161,7 +161,7 @@ async def process_chat(messages: list[dict], client_ip: str):
 
     # === STEP 4: Describe what was queried (stream to user) ===
     desc_text = ""
-    stream = await step4_describe(code, output, messages)
+    stream = step4_describe(code, output, messages)
     async for event_type, data in stream:
         if event_type == "text":
             yield f"event: text\ndata: {json.dumps(data)}\n\n"
@@ -174,7 +174,7 @@ async def process_chat(messages: list[dict], client_ip: str):
 
     # === STEP 5: Interpret results (stream to user) ===
     interp_text = ""
-    stream = await step5_interpret(code, output, messages)
+    stream = step5_interpret(code, output, messages)
     async for event_type, data in stream:
         if event_type == "text":
             yield f"event: text\ndata: {json.dumps(data)}\n\n"

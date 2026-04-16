@@ -163,67 +163,50 @@ def extract_python(text: str) -> str | None:
     return match.group(1).strip() if match else None
 
 
-async def ai_call(system: str, messages: list[dict], stream=False):
-    """Single AI call. Returns full text, or streams (event_type, data) tuples."""
-    if stream:
-        async def _stream():
-            async with client.messages.stream(
-                model=MODEL, max_tokens=4096, system=system, messages=messages,
-            ) as s:
-                full = ""
-                async for text in s.text_stream:
-                    full += text
-                    yield ("text", text)
-                yield ("full_response", full)
-        return _stream()
-    else:
-        resp = await client.messages.create(
-            model=MODEL, max_tokens=4096, system=system, messages=messages,
-        )
-        return resp.content[0].text
+async def ai_stream(system, messages):
+    """Stream AI response. Yields (event_type, data) tuples."""
+    async with client.messages.stream(
+        model=MODEL, max_tokens=4096, system=system, messages=messages,
+    ) as s:
+        full = ""
+        async for text in s.text_stream:
+            full += text
+            yield ("text", text)
+        yield ("full_response", full)
 
 
-async def step1_understand(messages: list[dict]):
+async def ai_complete(system, messages):
+    """Non-streaming AI call. Returns full text."""
+    resp = await client.messages.create(
+        model=MODEL, max_tokens=4096, system=system, messages=messages,
+    )
+    return resp.content[0].text
+
+
+def step1_understand(messages):
     """Stream the understanding/confirmation response."""
-    return ai_call(UNDERSTAND_PROMPT, messages, stream=True)
+    return ai_stream(UNDERSTAND_PROMPT, messages)
 
 
-async def step3_generate(messages: list[dict], confirmed_intent: str):
-    """Generate code (non-streaming, we don't show it to user)."""
+async def step3_generate(messages, confirmed_intent):
+    """Generate code (non-streaming, hidden from user)."""
     gen_messages = messages + [
         {"role": "user", "content": f"The user confirmed this intent: {confirmed_intent}\n\nGenerate the code now. Output ONLY <sql> or <python> tags with code inside."}
     ]
-    return await ai_call(GENERATE_PROMPT, gen_messages, stream=False)
+    return await ai_complete(GENERATE_PROMPT, gen_messages)
 
 
-async def step4_describe(code: str, output: str, user_lang_messages: list[dict]):
+def step4_describe(code, output, user_lang_messages):
     """Describe what was queried (streaming)."""
-    # Extract user language from conversation
-    desc_messages = [
-        {"role": "user", "content": f"""Here is the code that was executed and its output.
-Describe to the user what was searched, in their language.
-
-CODE:
-{code}
-
-OUTPUT SUMMARY:
-{output[:3000]}"""}
-    ]
-    return ai_call(DESCRIBE_PROMPT, desc_messages, stream=True)
+    user_langs = json.dumps([m for m in user_lang_messages[-4:] if m['role'] == 'user'], ensure_ascii=False)
+    return ai_stream(DESCRIBE_PROMPT, [
+        {"role": "user", "content": f"Code executed:\n{code}\n\nOutput:\n{output[:3000]}\n\nUser language context:\n{user_langs}"}
+    ])
 
 
-async def step5_interpret(code: str, output: str, user_lang_messages: list[dict]):
+def step5_interpret(code, output, user_lang_messages):
     """Interpret results (streaming)."""
-    interpret_messages = [
-        {"role": "user", "content": f"""Here are the query results to interpret.
-
-CODE THAT WAS RUN:
-{code}
-
-FULL OUTPUT:
-{output[:5000]}
-
-Provide a data-backed analysis. Use the user's language from the conversation below:
-{json.dumps([m for m in user_lang_messages[-4:] if m['role']=='user'], ensure_ascii=False)}"""}
-    ]
-    return ai_call(INTERPRET_PROMPT, interpret_messages, stream=True)
+    user_langs = json.dumps([m for m in user_lang_messages[-4:] if m['role'] == 'user'], ensure_ascii=False)
+    return ai_stream(INTERPRET_PROMPT, [
+        {"role": "user", "content": f"Code:\n{code}\n\nResults:\n{output[:5000]}\n\nUser language context:\n{user_langs}"}
+    ])

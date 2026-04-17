@@ -1,23 +1,22 @@
 #!/usr/bin/env python3
 """
-Polymarket Data Indexer - Main Runner
+Polymarket data pipeline — operational CLI.
 
 Usage:
-    python run.py sync-markets          # Sync market metadata from Gamma API
-    python run.py index-trades          # Index OrderFilled + OrdersMatched events
-    python run.py index-resolutions     # Index ConditionResolution + PayoutRedemption
-    python run.py index-all             # Run all indexers sequentially
-    python run.py status                # Show indexer status
-    python run.py backtest-099          # Run the 0.99+ resolution backtest
+    python run.py sync-markets     # Sync market metadata from Gamma API
+    python run.py index            # Run the on-chain indexer (alias for unified_indexer.py)
+    python run.py status           # Show indexer progress and table counts
+    python run.py backtest-099     # Run the 0.99+ post-expiry backtest
+
+Notes:
+    * Indexing goes through unified_indexer.py (single-pass: trades +
+      resolutions + redemptions in one scan). The older parallel entries
+      (index-trades / index-resolutions / index-all / run_neg_risk.py) were
+      removed on 2026-04-17 — they were superseded and hadn't run in weeks.
 """
 
 import sys
 import time
-from datetime import datetime, timezone
-from config import (
-    CTF_EXCHANGE, NEG_RISK_CTF_EXCHANGE,
-    CTF_EXCHANGE_START_BLOCK, NEG_RISK_START_BLOCK
-)
 
 
 def cmd_sync_markets():
@@ -25,55 +24,14 @@ def cmd_sync_markets():
     sync_all_markets()
 
 
-def cmd_index_trades():
-    from indexer import index_exchange_events
-    print("=" * 60)
-    print("Phase 1: CTF Exchange (standard markets)")
-    print("=" * 60)
-    index_exchange_events(
-        CTF_EXCHANGE, "ctf",
-        "ctf_exchange_last_block", CTF_EXCHANGE_START_BLOCK
-    )
-
-    print()
-    print("=" * 60)
-    print("Phase 2: Neg Risk CTF Exchange (multi-outcome markets)")
-    print("=" * 60)
-    index_exchange_events(
-        NEG_RISK_CTF_EXCHANGE, "neg_risk",
-        "neg_risk_exchange_last_block", NEG_RISK_START_BLOCK
-    )
-
-
-def cmd_index_resolutions():
-    from indexer import index_conditional_token_events
-    index_conditional_token_events()
-
-
-def cmd_index_all():
-    print("=" * 60)
-    print("Step 1/3: Sync market metadata")
-    print("=" * 60)
-    cmd_sync_markets()
-
-    print()
-    print("=" * 60)
-    print("Step 2/3: Index trade events")
-    print("=" * 60)
-    cmd_index_trades()
-
-    print()
-    print("=" * 60)
-    print("Step 3/3: Index resolution & redemption events")
-    print("=" * 60)
-    cmd_index_resolutions()
-
-    print()
-    print("All indexing complete!")
+def cmd_index():
+    """Run the unified indexer (see unified_indexer.py)."""
+    from unified_indexer import run as run_unified
+    run_unified()
 
 
 def cmd_status():
-    from db import get_conn, get_state
+    from db import get_conn
     from indexer import get_current_block
 
     current = get_current_block()
@@ -325,9 +283,7 @@ def main():
     cmd = sys.argv[1]
     commands = {
         "sync-markets": cmd_sync_markets,
-        "index-trades": cmd_index_trades,
-        "index-resolutions": cmd_index_resolutions,
-        "index-all": cmd_index_all,
+        "index": cmd_index,
         "status": cmd_status,
         "backtest-099": cmd_backtest_099,
     }

@@ -4,3 +4,4 @@ __pycache__/
 *.log
 webapp/logs/
 .env
+certs/

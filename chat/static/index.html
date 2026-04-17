@@ -2,300 +2,83 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
 <title>Polymarket Explorer</title>
-<style>
-* { margin: 0; padding: 0; box-sizing: border-box; }
-body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0a0a0f; color: #e0e0e0; height: 100vh; overflow: hidden; }
-
-/* Auth */
-#auth { position: fixed; inset: 0; background: #0a0a0f; display: flex; align-items: center; justify-content: center; z-index: 100; }
-#auth.hidden { display: none; }
-#auth-box { background: #12121a; border: 1px solid #2a2a3a; border-radius: 12px; padding: 32px; width: 340px; }
-#auth-box h2 { color: #7c8aff; margin-bottom: 16px; }
-#auth-box input { width: 100%; background: #1a1a28; border: 1px solid #2a2a3a; border-radius: 8px; padding: 10px 14px; color: #e0e0e0; font-size: 14px; margin-bottom: 10px; outline: none; }
-#auth-box input:focus { border-color: #7c8aff; }
-.abtn { width: 100%; padding: 10px; border: none; border-radius: 8px; font-size: 14px; cursor: pointer; margin-bottom: 6px; font-weight: 600; }
-.abtn.primary { background: #7c8aff; color: #fff; }
-.abtn.secondary { background: transparent; border: 1px solid #2a2a3a; color: #888; }
-#auth-err { color: #ff6b6b; font-size: 13px; margin-bottom: 8px; }
-
-/* Layout */
-#app { display: none; height: 100vh; }
-.layout { display: flex; height: 100%; }
-
-/* Sidebar */
-.sidebar { width: 260px; background: #111118; border-right: 1px solid #1e1e2e; display: flex; flex-direction: column; flex-shrink: 0; }
-.sb-top { padding: 14px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #1e1e2e; }
-.sb-top h2 { font-size: 14px; color: #7c8aff; font-weight: 600; }
-.sb-new { background: #7c8aff; color: #fff; border: none; border-radius: 6px; padding: 5px 14px; font-size: 12px; cursor: pointer; }
-.sb-new:hover { background: #6b79ee; }
-.sb-list { flex: 1; overflow-y: auto; padding: 6px; }
-.sb-item { padding: 10px 12px; border-radius: 8px; cursor: pointer; margin-bottom: 2px; }
-.sb-item:hover { background: #1a1a28; }
-.sb-item.active { background: #1a1a30; border: 1px solid #2a2a5a; }
-.sb-item .title { font-size: 13px; color: #ccc; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
-.sb-item.active .title { color: #7c8aff; }
-.sb-item .time { font-size: 11px; color: #555; margin-top: 3px; pointer-events: none; }
-.sb-bottom { padding: 10px 14px; border-top: 1px solid #1e1e2e; display: flex; justify-content: space-between; align-items: center; }
-.sb-bottom span { font-size: 13px; color: #888; }
-.sb-bottom button { background: none; border: none; color: #666; cursor: pointer; font-size: 12px; }
-.sb-bottom button:hover { color: #ff6b6b; }
-
-/* Main */
-.main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
-.topbar { padding: 12px 24px; background: #0e0e16; border-bottom: 1px solid #1e1e2e; }
-.topbar h1 { font-size: 16px; color: #7c8aff; }
-
-.chat { flex: 1; overflow-y: auto; padding: 20px 24px; display: flex; flex-direction: column; gap: 14px; }
-.msg { max-width: 80%; padding: 12px 16px; border-radius: 12px; line-height: 1.6; font-size: 14px; }
-.msg.user { align-self: flex-end; background: #1e3a5f; color: #c8dff5; border-bottom-right-radius: 4px; }
-.msg.ai { align-self: flex-start; background: #16161f; border: 1px solid #222233; border-bottom-left-radius: 4px; }
-.msg .text { white-space: pre-wrap; word-wrap: break-word; }
-.thinking { color: #666; font-style: italic; }
-.error { background: #2a1515; border: 1px solid #5a2020; color: #ff8080; padding: 10px; border-radius: 8px; margin: 6px 0; font-size: 13px; }
-.fb { display: flex; gap: 6px; padding: 8px 0 0; margin-top: 6px; border-top: 1px solid #222; }
-.fb span { font-size: 11px; color: #555; }
-.fb button { background: #16161f; border: 1px solid #222; border-radius: 5px; padding: 3px 10px; font-size: 11px; color: #777; cursor: pointer; }
-.fb button:hover, .fb button.sel { border-color: #7c8aff; color: #7c8aff; }
-
-.examples { padding: 20px 24px; display: flex; gap: 8px; flex-wrap: wrap; }
-.ex { background: #16161f; border: 1px solid #222233; border-radius: 20px; padding: 6px 14px; font-size: 12px; color: #888; cursor: pointer; }
-.ex:hover { border-color: #7c8aff; color: #7c8aff; }
-
-.input-area { padding: 14px 24px; background: #0e0e16; border-top: 1px solid #1e1e2e; display: flex; gap: 10px; }
-.input-area textarea { flex: 1; background: #16161f; border: 1px solid #222233; border-radius: 8px; padding: 12px 14px; color: #e0e0e0; font-size: 14px; font-family: inherit; resize: none; height: 46px; outline: none; }
-.input-area textarea:focus { border-color: #7c8aff; }
-.input-area button { background: #7c8aff; color: #fff; border: none; border-radius: 8px; padding: 0 22px; font-size: 14px; cursor: pointer; font-weight: 600; }
-.input-area button:disabled { background: #333; cursor: not-allowed; }
-</style>
+<link rel="stylesheet" href="/static/app.css?v=2026-04-17-5">
 </head>
 <body>
 
-<div id="auth">
-  <div id="auth-box">
+<!-- Auth overlay -->
+<div id="auth" class="auth-overlay">
+  <!--
+    Fail-safe: onsubmit="return false" prevents the browser's default form
+    submission even if app.js hasn't loaded or errored out. Without this,
+    a stale/missing JS would let the browser GET-submit credentials into
+    the URL (visible in history, referer, server logs). The real submit
+    logic is wired in app.js via addEventListener("submit", ...).
+  -->
+  <form id="auth-form" class="auth-box" method="post" action="javascript:void(0)"
+        onsubmit="return false" autocomplete="on">
     <h2>Polymarket Explorer</h2>
-    <div id="auth-err"></div>
-    <input id="a-user" placeholder="Username" onkeydown="if(event.key==='Enter')doLogin()">
-    <input id="a-pass" type="password" placeholder="Password" onkeydown="if(event.key==='Enter')doLogin()">
-    <button class="abtn primary" onclick="doLogin()">Login</button>
-    <button class="abtn secondary" onclick="doRegister()">Create Account</button>
-  </div>
+    <div id="auth-err" class="auth-err" role="alert"></div>
+    <input id="auth-username" name="username" autocomplete="username" placeholder="Username" required>
+    <input id="auth-password" name="password" type="password" autocomplete="current-password" placeholder="Password" required>
+    <button type="submit" class="btn-primary" id="btn-login">Login</button>
+    <button type="button" class="btn-ghost" id="btn-register">Create account</button>
+  </form>
 </div>
 
-<div id="app">
-  <div class="layout">
-    <div class="sidebar">
-      <div class="sb-top">
-        <h2>History</h2>
-        <button class="sb-new" onclick="newChat()">+ New</button>
-      </div>
-      <div class="sb-list" id="sb-list"></div>
-      <div class="sb-bottom">
-        <span id="sb-user"></span>
-        <button onclick="doLogout()">Logout</button>
-      </div>
+<!-- Sidebar (history) -->
+<aside id="sidebar" class="sidebar" hidden>
+  <header class="sidebar-top">
+    <h2>History</h2>
+    <button id="btn-new" class="btn-primary btn-small">+ New</button>
+  </header>
+  <div id="session-list" class="session-list"></div>
+  <footer class="sidebar-bot">
+    <span id="current-user"></span>
+    <button id="btn-logout" class="btn-link">Logout</button>
+  </footer>
+</aside>
+
+<!-- Mobile sidebar toggle -->
+<button id="btn-menu" class="btn-menu" aria-label="Toggle history" hidden>☰</button>
+
+<!-- Main chat area -->
+<main id="main" class="main" hidden>
+  <header class="topbar">
+    <h1>Polymarket Explorer</h1>
+    <span id="stage-indicator" class="stage-indicator" hidden></span>
+  </header>
+
+  <section id="examples" class="examples">
+    <p class="examples-hint">
+      不知道怎么问？点一个示例会把它填进输入框 —— 你可以改了再发。
+      好问题通常包含 <strong>范围</strong>（哪些市场 / 哪段时间）、<strong>筛选条件</strong>（价格、成交量、地址等）、<strong>想要的指标</strong>（胜率 / ROI / 分布 / 排序）。
+    </p>
+    <div class="example-chips">
+      <!-- Pattern: 具体市场 × 交易者画像 × 聚合 -->
+      <button class="example-chip">2024 Trump/Harris 大选市场里，投入金额 Top 20 的地址，分别盈亏多少？</button>
+      <!-- Pattern: 策略回测（时间窗口 + 价格阈值 + 分桶指标）-->
+      <button class="example-chip">已结算市场里，end_date 之后以 ≥0.95 买入的交易，按价位每 0.01 分桶，统计胜率和净 ROI</button>
+      <!-- Pattern: 时间窗口 × 排序 × 分布 -->
+      <button class="example-chip">最近 30 天成交量 Top 20 市场，按类别分布（政治 / 体育 / 加密 / 其他）</button>
+      <!-- Pattern: outlier detection（排序 + Top N + 上下文字段）-->
+      <button class="example-chip">已结算市场里，结算前 24 小时最后成交价与实际结果差距最大的 20 个市场，附成交量和持续时间</button>
     </div>
-    <div class="main">
-      <div class="topbar"><h1>Polymarket Explorer</h1></div>
-      <div class="examples" id="examples">
-        <div class="ex" onclick="ask(this)">有人在结果已定后还高价买错了方向吗？亏了多少？</div>
-        <div class="ex" onclick="ask(this)">Trump大选市场里投入最多的地址，他最终赚了还是亏了？</div>
-        <div class="ex" onclick="ask(this)">What does the data say about buying at 0.99 after the event deadline?</div>
-        <div class="ex" onclick="ask(this)">哪个市场的结算结果最出人意料？</div>
-      </div>
-      <div class="chat" id="chat"></div>
-      <div class="input-area">
-        <textarea id="inp" placeholder="Ask anything..." onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();send()}"></textarea>
-        <button id="btn" onclick="send()">Send</button>
-      </div>
-    </div>
-  </div>
-</div>
+  </section>
 
-<script>
-var token = localStorage.getItem('pm_token');
-var username = localStorage.getItem('pm_user');
-var history = [];
-var sid = crypto.randomUUID();
-var streaming = false;
+  <div id="chat" class="chat" aria-live="polite"></div>
 
-function $(id) { return document.getElementById(id); }
-function hdr() { var h={'Content-Type':'application/json'}; if(token) h.Authorization='Bearer '+token; return h; }
+  <form id="input-bar" class="input-bar" action="javascript:void(0)" onsubmit="return false">
+    <textarea id="input" placeholder="Ask anything..." rows="1"
+              aria-label="Your question"></textarea>
+    <button type="submit" class="btn-primary" id="btn-send">Send</button>
+    <button type="button" class="btn-ghost" id="btn-cancel" hidden>Cancel</button>
+  </form>
+</main>
 
-// === Auth ===
-async function doLogin() {
-  var r = await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:$('a-user').value,password:$('a-pass').value})});
-  var d = await r.json();
-  if(d.status==='ok'){token=d.token;username=d.username;localStorage.setItem('pm_token',token);localStorage.setItem('pm_user',username);enter();}
-  else{$('auth-err').textContent=d.message;}
-}
-async function doRegister() {
-  var r = await fetch('/api/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:$('a-user').value,password:$('a-pass').value})});
-  var d = await r.json();
-  if(d.status==='ok'){token=d.token;username=d.username;localStorage.setItem('pm_token',token);localStorage.setItem('pm_user',username);enter();}
-  else{$('auth-err').textContent=d.message;}
-}
-function doLogout(){localStorage.removeItem('pm_token');localStorage.removeItem('pm_user');token=null;$('auth').className='';$('app').style.display='none';}
-function enter(){$('auth').className='hidden';$('app').style.display='block';$('sb-user').textContent=username;loadHistory();}
-
-// === Session History ===
-async function loadHistory() {
-  try {
-    var r = await fetch('/api/sessions',{headers:hdr()});
-    var d = await r.json();
-    var list = $('sb-list');
-    list.innerHTML = '';
-    var found = false;
-    if(d.sessions){
-      d.sessions.forEach(function(s){
-        if(!s.session_id) return;
-        if(s.session_id===sid) found=true;
-        var div = document.createElement('div');
-        div.className = 'sb-item' + (s.session_id===sid?' active':'');
-        var t = s.topic_summary || 'Untitled';
-        var dt = s.started_at ? new Date(s.started_at).toLocaleDateString() : '';
-        div.innerHTML = '<div class="title">'+esc(t)+'</div><div class="time">'+dt+'</div>';
-        div.setAttribute('data-sid', s.session_id);
-        div.onclick = function(){ loadSession(s.session_id); };
-        list.appendChild(div);
-      });
-    }
-    // If current session not in DB yet, show it at top
-    if(!found && history.length > 0){
-      var cur = document.createElement('div');
-      cur.className = 'sb-item active';
-      var title = history[0] ? history[0].content.substring(0,40) : 'New chat';
-      cur.innerHTML = '<div class="title">'+esc(title)+'</div><div class="time">now</div>';
-      list.insertBefore(cur, list.firstChild);
-    }
-  } catch(e) {}
-}
-
-function newChat() {
-  sid = crypto.randomUUID();
-  history = [];
-  $('chat').innerHTML = '';
-  $('examples').style.display = 'flex';
-  // Add new chat to sidebar immediately and highlight it
-  var list = $('sb-list');
-  // Remove active from all
-  var items = list.querySelectorAll('.sb-item');
-  for(var i=0;i<items.length;i++) items[i].classList.remove('active');
-  // Insert at top
-  var div = document.createElement('div');
-  div.className = 'sb-item active';
-  div.setAttribute('data-sid', sid);
-  div.innerHTML = '<div class="title">New chat</div><div class="time">now</div>';
-  div.onclick = function(){ loadSession(sid); };
-  list.insertBefore(div, list.firstChild);
-}
-
-function loadSession(id) {
-  fetch('/api/sessions/'+id,{headers:hdr()})
-    .then(function(r){return r.json()})
-    .then(function(d){
-      if(d.status!=='ok') return;
-      sid = d.session_id;
-      var conv = d.conversation;
-      if(typeof conv === 'string') conv = JSON.parse(conv);
-      history = conv || [];
-      var c = $('chat');
-      c.innerHTML = '';
-      $('examples').style.display = 'none';
-      for(var i=0;i<history.length;i++){
-        var m = history[i];
-        var div = document.createElement('div');
-        div.className = 'msg '+(m.role==='user'?'user':'ai');
-        if(m.role==='user'){
-          div.textContent = m.content;
-        } else {
-          var t = document.createElement('div');
-          t.className = 'text';
-          t.textContent = m.content;
-          div.appendChild(t);
-        }
-        c.appendChild(div);
-      }
-      c.scrollTop = c.scrollHeight;
-      loadHistory();
-    });
-}
-
-function esc(s){var d=document.createElement('div');d.textContent=s;return d.innerHTML;}
-
-// === Chat ===
-function ask(el){$('inp').value=el.textContent;send();}
-
-async function send() {
-  var text = $('inp').value.trim();
-  if(!text||streaming) return;
-  streaming=true; $('btn').disabled=true; $('inp').value='';
-  $('examples').style.display='none';
-
-  // User message
-  var um = document.createElement('div'); um.className='msg user'; um.textContent=text;
-  $('chat').appendChild(um);
-  history.push({role:'user',content:text});
-
-  // AI message
-  var am = document.createElement('div'); am.className='msg ai';
-  var te = document.createElement('div'); te.className='text';
-  te.innerHTML='<span class="thinking">Thinking...</span>';
-  am.appendChild(te); $('chat').appendChild(am);
-  $('chat').scrollTop=$('chat').scrollHeight;
-
-  var full='';
-  try {
-    var r = await fetch('/api/chat',{method:'POST',headers:hdr(),body:JSON.stringify({messages:history,session_id:sid})});
-    var reader=r.body.getReader(), dec=new TextDecoder(), buf='', first=true, evt=null;
-    while(true){
-      var ch=await reader.read(); if(ch.done) break;
-      buf+=dec.decode(ch.value,{stream:true});
-      var lines=buf.split('\n'); buf=lines.pop();
-      for(var i=0;i<lines.length;i++){
-        var ln=lines[i];
-        if(ln.startsWith('event: ')) evt=ln.slice(7);
-        else if(ln.startsWith('data: ')&&evt){
-          var data=JSON.parse(ln.slice(6));
-          if(first){te.innerHTML='';first=false;}
-          if(evt==='text'){full+=data;te.textContent=full;$('chat').scrollTop=$('chat').scrollHeight;}
-          else if(evt==='status'){te.innerHTML='<span class="thinking">'+esc(data)+'</span>';$('chat').scrollTop=$('chat').scrollHeight;}
-          else if(evt==='error'){var e=document.createElement('div');e.className='error';e.textContent=data.error;am.appendChild(e);}
-          evt=null;
-        }
-      }
-    }
-  } catch(e){te.textContent='Connection error: '+e.message;}
-
-  if(full.trim()) history.push({role:'assistant',content:full});
-  if(history.length>40) history=history.slice(-40);
-
-  // Feedback
-  var fb=document.createElement('div');fb.className='fb';
-  fb.innerHTML='<span>Helpful?</span><button onclick="rate(this,5)">👍</button><button onclick="rate(this,1)">👎</button>';
-  am.appendChild(fb);
-
-  streaming=false;$('btn').disabled=false;$('inp').focus();
-  loadHistory();
-}
-
-function rate(b,v){b.parentElement.querySelectorAll('button').forEach(function(x){x.classList.remove('sel')});b.classList.add('sel');fetch('/api/feedback',{method:'POST',headers:hdr(),body:JSON.stringify({session_id:sid,rating:v})});}
-
-// Save on leave
-window.addEventListener('beforeunload',function(){
-  if(history.length>0){
-    var uid=null;try{if(token)uid=JSON.parse(atob(token.split('.')[1])).user_id;}catch(e){}
-    navigator.sendBeacon('/api/end-session',new Blob([JSON.stringify({session_id:sid,messages:history,user_id:uid})],{type:'application/json'}));
-  }
-});
-
-// Init
-if(token){
-  fetch('/api/me',{headers:hdr()}).then(function(r){return r.json()}).then(function(d){
-    if(d.status==='ok'){username=d.username;enter();}else{doLogout();}
-  });
-}
-</script>
+<script src="/static/app.js?v=2026-04-17-5" defer></script>
 </body>
 </html>

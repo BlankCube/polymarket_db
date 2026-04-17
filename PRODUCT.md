@@ -122,7 +122,7 @@ Collects user behavior data, enables periodic review, and provides a framework f
 5. Impact is monitored after deployment
 
 **Key data sources for review:**
-- `webapp/logs/chat.jsonl` — raw interaction log
+- `feedback/logs/chat.jsonl` — raw interaction log
 - `user_sessions` table — per-session conversations, ratings, feedback
 - Server logs — errors, timeouts, failed queries
 
@@ -165,13 +165,18 @@ Buying at price P requires win rate > P to break even. This is non-negotiable kn
 | **Edge Case Bug** | Broken only in rare conditions | Fix if low-risk, otherwise backlog |
 | **Preference** | User wants it different, current behavior is reasonable | Change only if pattern emerges across multiple users |
 | **Misuse** | User expects something the tool isn't designed for | Improve onboarding, don't change core |
+| **Transient** | State that will self-resolve without intervention (e.g. indexer catching up, Gamma sync lag, migration window) | Do NOT patch. Note and move on — patches for transient states become tech debt that misleads users once the state resolves. |
 
 #### Step 2: Quantify Before Acting
+
+Before anything else, answer **"will this problem still exist in 2 weeks if we do nothing?"** If no, it's Transient — classify it as such in Step 1 and stop. Proceeding only makes sense for structural problems.
+
+Then for structural problems:
 
 - How many users are affected? (check session data)
 - What's the severity? (annoying vs blocking)
 - What's the blast radius of the fix? (does it affect other scenarios?)
-- Is there a pattern? (one user ≠ systemic problem)
+- Is there a pattern? (one user ≠ systemic problem — **unless** the mechanism is predictable: e.g. "any query filtering by non-indexed column on order_fills will time out" is confirmable with N=1 because you can explain why the next user will hit it)
 
 #### Step 3: Evaluate Impact
 

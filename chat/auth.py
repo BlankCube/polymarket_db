@@ -5,12 +5,7 @@ import bcrypt
 import psycopg2
 from datetime import datetime, timedelta
 
-SECRET = "pm-explorer-secret-change-later"
-ALGORITHM = "HS256"
-TOKEN_EXPIRE_DAYS = 30
-
-DB_PARAMS = dict(host="localhost", port=5432, dbname="polymarket_db",
-                 user="polymarket", password="polymarket123")
+from config import DB_PARAMS, JWT_SECRET, JWT_ALGORITHM, JWT_TOKEN_EXPIRE_DAYS
 
 
 def _get_conn():
@@ -29,14 +24,14 @@ def create_token(user_id: int, username: str) -> str:
     payload = {
         "user_id": user_id,
         "username": username,
-        "exp": datetime.utcnow() + timedelta(days=TOKEN_EXPIRE_DAYS),
+        "exp": datetime.utcnow() + timedelta(days=JWT_TOKEN_EXPIRE_DAYS),
     }
-    return jwt.encode(payload, SECRET, algorithm=ALGORITHM)
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
 
 def decode_token(token: str) -> dict | None:
     try:
-        return jwt.decode(token, SECRET, algorithms=[ALGORITHM])
+        return jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
     except jwt.ExpiredSignatureError:
         return None
     except jwt.InvalidTokenError:

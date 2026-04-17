@@ -1,8 +1,14 @@
 #!/usr/bin/env python3
 """
-Unified single-pass indexer: scans each block range ONCE,
-fetches all events (trades + resolutions + redemptions) together,
-shares block timestamp lookups.
+Unified single-pass indexer — THE canonical on-chain indexer.
+
+Scans each block range ONCE and fetches every event (CTF trades,
+Neg-Risk trades, ConditionResolution, PayoutRedemption) together so
+block-timestamp lookups are shared. This replaced the older parallel
+per-exchange indexers.
+
+Run directly:   python unified_indexer.py
+Or via the CLI: python run.py index
 """
 
 import time

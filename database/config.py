@@ -1,15 +1,54 @@
-"""Configuration for Polymarket data collection."""
+"""Configuration for Polymarket data collection.
+
+Secrets (DB password, RPC URL with API key) are read from env vars with
+fallback defaults for local dev. A sibling .env file at the project root is
+auto-loaded on import, so running `python unified_indexer.py` picks up the
+same credentials as the webapp.
+"""
+
+import os
+from pathlib import Path
+
+
+def _load_dotenv():
+    """Populate os.environ from <project_root>/.env for keys that are missing
+    OR set to empty string. Shell exports / systemd unit Environment= always
+    win — the .env only fills gaps.
+    """
+    env_path = Path(__file__).resolve().parent.parent / ".env"
+    if not env_path.is_file():
+        return
+    try:
+        for raw in env_path.read_text().splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, val = line.partition("=")
+            key = key.strip()
+            val = val.strip().strip('"').strip("'")
+            if key and not os.environ.get(key):
+                os.environ[key] = val
+    except OSError:
+        pass
+
+
+_load_dotenv()
+
 
 # PostgreSQL
-DB_HOST = "localhost"
-DB_PORT = 5432
-DB_NAME = "polymarket_db"
-DB_USER = "polymarket"
-DB_PASSWORD = "polymarket123"
+DB_HOST = os.environ.get("PM_DB_HOST", "localhost")
+DB_PORT = int(os.environ.get("PM_DB_PORT", "5432"))
+DB_NAME = os.environ.get("PM_DB_NAME", "polymarket_db")
+DB_USER = os.environ.get("PM_DB_USER", "polymarket")
+DB_PASSWORD = os.environ.get("PM_DB_PASSWORD", "polymarket123")
 DB_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
-# Polygon RPC (QuikNode full node)
-POLYGON_RPC = "https://broken-small-fire.matic.quiknode.pro/84ee9f62000fd3743f66098da514f2364fd73622/"
+# Polygon RPC (full node). This URL contains an API key — never commit the
+# real value. .env or env var overrides the dev placeholder below.
+POLYGON_RPC = os.environ.get(
+    "POLYGON_RPC",
+    "https://broken-small-fire.matic.quiknode.pro/84ee9f62000fd3743f66098da514f2364fd73622/",
+)
 
 # Polymarket contract addresses (Polygon mainnet)
 CTF_EXCHANGE = "0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E"
@@ -28,8 +67,15 @@ TOPIC_CONDITION_PREPARATION = "0xab3760c3bd2bb38b5bcf54dc79802ed67338b4cf29f3054
 GAMMA_API = "https://gamma-api.polymarket.com"
 
 # Indexing settings
-LOG_BATCH_SIZE = 500  # blocks per eth_getLogs request (small for election-era density)
+LOG_BATCH_SIZE = int(os.environ.get("PM_LOG_BATCH_SIZE", "500"))  # blocks per eth_getLogs call
 GAMMA_PAGE_SIZE = 100  # markets per API page
+
+# Indexer error-handling parameters.
+# On failure, we retry the same block range with exponential backoff and
+# abort the process after too many consecutive failures so a stuck indexer
+# never silently advances past missing data.
+INDEXER_MAX_CONSECUTIVE_FAILURES = int(os.environ.get("PM_INDEXER_MAX_FAILURES", "5"))
+INDEXER_BACKOFF_SECONDS = (3, 10, 30, 60, 120)  # retry #1, #2, #3, #4, #5+
 
 # CTF Exchange deployment block (approximate - skip to where activity starts)
 CTF_EXCHANGE_START_BLOCK = 44_000_000  # ~June 2023, activity picks up here

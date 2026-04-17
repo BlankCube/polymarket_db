@@ -12,6 +12,26 @@ def get_conn():
     )
 
 
+def ensure_conn(conn):
+    """Return a usable connection; transparently reconnect if the current one
+    is dead (PG restarted, network blip, idle timeout).
+
+    Call this at the top of every indexer loop iteration so a connection-level
+    failure costs you one batch, not the whole process.
+    """
+    try:
+        # Lightweight round-trip that fails fast on a broken connection.
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1")
+        return conn
+    except (psycopg2.InterfaceError, psycopg2.OperationalError):
+        try:
+            conn.close()
+        except Exception:
+            pass
+        return get_conn()
+
+
 def get_state(key, default=None):
     """Get indexer state value."""
     conn = get_conn()
@@ -35,6 +55,21 @@ def set_state(key, value):
                 ON CONFLICT (key) DO UPDATE SET value = %s, updated_at = NOW()
             """, (key, str(value), str(value)))
         conn.commit()
+    finally:
+        conn.close()
+
+
+def delete_state(keys):
+    """Remove one or more stale indexer_state rows by key."""
+    if not keys:
+        return 0
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM indexer_state WHERE key = ANY(%s)", (list(keys),))
+            deleted = cur.rowcount
+        conn.commit()
+        return deleted
     finally:
         conn.close()
 

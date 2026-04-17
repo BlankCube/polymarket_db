@@ -7,32 +7,16 @@ same credentials as the webapp.
 """
 
 import os
+import sys
 from pathlib import Path
 
+# Make the project-root shared helpers importable. database/ is run with
+# its own dir as CWD (`python run.py ...`), so we have to put the parent on
+# sys.path before we can import _pm_common.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from _pm_common import load_dotenv  # noqa: E402
 
-def _load_dotenv():
-    """Populate os.environ from <project_root>/.env for keys that are missing
-    OR set to empty string. Shell exports / systemd unit Environment= always
-    win — the .env only fills gaps.
-    """
-    env_path = Path(__file__).resolve().parent.parent / ".env"
-    if not env_path.is_file():
-        return
-    try:
-        for raw in env_path.read_text().splitlines():
-            line = raw.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, _, val = line.partition("=")
-            key = key.strip()
-            val = val.strip().strip('"').strip("'")
-            if key and not os.environ.get(key):
-                os.environ[key] = val
-    except OSError:
-        pass
-
-
-_load_dotenv()
+load_dotenv()
 
 
 # PostgreSQL
@@ -41,7 +25,7 @@ DB_PORT = int(os.environ.get("PM_DB_PORT", "5432"))
 DB_NAME = os.environ.get("PM_DB_NAME", "polymarket_db")
 DB_USER = os.environ.get("PM_DB_USER", "polymarket")
 DB_PASSWORD = os.environ.get("PM_DB_PASSWORD", "polymarket123")
-DB_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+DB_DSN = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
 # Polygon RPC (full node). This URL contains an API key — never commit the
 # real value. .env or env var overrides the dev placeholder below.

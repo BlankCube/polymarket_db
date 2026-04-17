@@ -2,14 +2,10 @@
 
 import jwt
 import bcrypt
-import psycopg2
 from datetime import datetime, timedelta
 
-from config import DB_PARAMS, JWT_SECRET, JWT_ALGORITHM, JWT_TOKEN_EXPIRE_DAYS
-
-
-def _get_conn():
-    return psycopg2.connect(**DB_PARAMS)
+from config import JWT_SECRET, JWT_ALGORITHM, JWT_TOKEN_EXPIRE_DAYS
+from db_pool import get_sync_conn
 
 
 def hash_password(password: str) -> str:
@@ -39,7 +35,7 @@ def decode_token(token: str) -> dict | None:
 
 
 def register(username: str, password: str, display_name: str = None) -> dict:
-    conn = _get_conn()
+    conn = get_sync_conn()
     try:
         with conn.cursor() as cur:
             cur.execute("SELECT id FROM users WHERE username = %s", (username,))
@@ -59,7 +55,7 @@ def register(username: str, password: str, display_name: str = None) -> dict:
 
 
 def login(username: str, password: str) -> dict:
-    conn = _get_conn()
+    conn = get_sync_conn()
     try:
         with conn.cursor() as cur:
             cur.execute("SELECT id, username, password_hash, display_name FROM users WHERE username = %s", (username,))

@@ -9,14 +9,9 @@ If they ever grow, move them to run_in_executor or port to asyncpg.
 """
 
 import json
-import psycopg2
 from datetime import datetime, date
 
-from config import DB_PARAMS
-
-
-def _get_conn():
-    return psycopg2.connect(**DB_PARAMS)
+from db_pool import get_sync_conn
 
 
 def save_messages(session_id: str, user_id: int | None, messages: list[dict]) -> None:
@@ -27,7 +22,7 @@ def save_messages(session_id: str, user_id: int | None, messages: list[dict]) ->
         (m["content"][:80] for m in messages if m["role"] == "user"),
         "New conversation",
     )
-    conn = _get_conn()
+    conn = get_sync_conn()
     try:
         with conn.cursor() as cur:
             cur.execute("""
@@ -52,7 +47,7 @@ def save_messages(session_id: str, user_id: int | None, messages: list[dict]) ->
 
 def save_feedback(session_id: str, rating: int | None, text: str) -> None:
     """Attach a rating / free-text feedback to a session. Creates a row if missing."""
-    conn = _get_conn()
+    conn = get_sync_conn()
     try:
         with conn.cursor() as cur:
             cur.execute("""
@@ -72,7 +67,7 @@ def save_feedback(session_id: str, rating: int | None, text: str) -> None:
 
 def list_sessions(user_id: int, limit: int = 50) -> list[dict]:
     """Return a user's session history (most recent first)."""
-    conn = _get_conn()
+    conn = get_sync_conn()
     try:
         with conn.cursor() as cur:
             cur.execute("""
@@ -100,7 +95,7 @@ def list_sessions(user_id: int, limit: int = 50) -> list[dict]:
 
 def get_session(session_id: str, user_id: int) -> dict | None:
     """Load a specific session's conversation. Returns None if not found or not owned by user."""
-    conn = _get_conn()
+    conn = get_sync_conn()
     try:
         with conn.cursor() as cur:
             cur.execute("""

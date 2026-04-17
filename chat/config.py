@@ -6,39 +6,17 @@ in other modules — import from here.
 """
 
 import os
+import sys
 import secrets
 from pathlib import Path
 
+# Make the project-root shared helpers importable. chat/ is run with its
+# own dir as CWD (uvicorn app:app), so we have to put the parent on
+# sys.path before we can import _pm_common.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from _pm_common import load_dotenv  # noqa: E402
 
-def _load_dotenv():
-    """Minimal .env loader — no python-dotenv dependency.
-
-    Reads `<project_root>/.env` (the parent of chat/) if it exists and
-    populates os.environ with any KEY=VALUE lines it finds. Existing env
-    vars are NOT overwritten, so a real shell export always wins.
-    """
-    env_path = Path(__file__).resolve().parent.parent / ".env"
-    if not env_path.is_file():
-        return
-    try:
-        for raw in env_path.read_text().splitlines():
-            line = raw.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, _, val = line.partition("=")
-            key = key.strip()
-            val = val.strip().strip('"').strip("'")
-            # Fill in the .env value if the env var is missing OR empty.
-            # Note: check for empty string specifically — some tools (e.g. IDE
-            # integrations) set env vars to "" rather than leaving them unset,
-            # which would otherwise cause the .env to be ignored.
-            if key and not os.environ.get(key):
-                os.environ[key] = val
-    except OSError:
-        pass  # unreadable .env — fall through to env-only mode
-
-
-_load_dotenv()
+load_dotenv()
 
 
 # === Database ===

@@ -146,14 +146,28 @@ import io
 _DB_PARAMS = __DB_PARAMS__
 _DB_OPTIONS = "-c default_transaction_read_only=on -c statement_timeout=__STMT_TIMEOUT__"
 
-def query_db(sql, limit=50000):
-    """Run a SQL query and return a pandas DataFrame. Auto-adds LIMIT if missing."""
+def query_db(sql, params=None, limit=50000):
+    """Run a SQL query and return a pandas DataFrame. Auto-adds LIMIT if missing.
+
+    ``params`` (optional): tuple or dict for parameterized queries using
+    %s placeholders. Prefer this over string-formatting values into SQL —
+    it handles escaping and type conversion (including timestamps).
+    Example:
+        from datetime import datetime, timedelta
+        cutoff = datetime.now() - timedelta(days=30)
+        query_db("SELECT * FROM order_fills WHERE block_timestamp >= %s",
+                 (cutoff,))
+
+    If you do NOT need parameterization, pass ``params=None`` (default)
+    and inline literal values in the SQL text itself — do NOT leave bare
+    %s placeholders in the query; PostgreSQL will raise a syntax error.
+    """
     sql = sql.strip().rstrip(";")
     if "LIMIT" not in sql.upper():
         sql += f" LIMIT {limit}"
     conn = psycopg2.connect(**_DB_PARAMS, options=_DB_OPTIONS)
     try:
-        return pd.read_sql_query(sql, conn)
+        return pd.read_sql_query(sql, conn, params=params)
     finally:
         conn.close()
 

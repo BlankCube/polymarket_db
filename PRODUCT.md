@@ -1,5 +1,9 @@
 # Polymarket Explorer - Product Foundation
 
+## Status
+
+**Early testing stage.** Not yet opened to external users; user base is a small group of internal testers (dev + friends). No uptime SLA — short restarts and breaking changes are acceptable, and data in `feedback/logs/chat.jsonl` comes from a handful of sessions, so apply the N≥2 rule in the Improvement Methodology strictly (single-session complaints are usually not actionable yet). Deferred hardening items live in `feedback/deferred_improvements.md`.
+
 ## What This Is
 
 A web tool that lets anyone explore Polymarket's full on-chain trading history (2023-present, 170M+ trades, 750K+ markets) using natural language. Users don't need SQL or database knowledge. An AI analyst converts their questions into queries, executes them, and interprets results.

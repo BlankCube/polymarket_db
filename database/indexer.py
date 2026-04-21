@@ -269,7 +269,6 @@ def process_order_filled_logs(logs, exchange_name, conn, cache: BatchCache):
             VALUES %s
             ON CONFLICT (tx_hash, log_index) DO NOTHING
         """, rows, page_size=1000)
-    conn.commit()
     return len(rows)
 
 
@@ -320,7 +319,6 @@ def process_orders_matched_logs(logs, exchange_name, conn, cache: BatchCache):
             VALUES %s
             ON CONFLICT (tx_hash, log_index) DO NOTHING
         """, rows, page_size=1000)
-    conn.commit()
     return len(rows)
 
 
@@ -363,33 +361,100 @@ def process_resolution_logs(logs, conn, cache: BatchCache):
         ))
         market_updates.append((cid, payout_json, ts))
 
-    try:
-        with conn.cursor() as cur:
-            psycopg2.extras.execute_values(cur, """
-                INSERT INTO resolutions
-                (tx_hash, log_index, block_number, block_timestamp,
-                 condition_id, oracle, question_id, outcome_slot_count, payout_numerators)
-                VALUES %s
-                ON CONFLICT (tx_hash, log_index) DO NOTHING
-            """, insert_rows, page_size=1000)
+    with conn.cursor() as cur:
+        psycopg2.extras.execute_values(cur, """
+            INSERT INTO resolutions
+            (tx_hash, log_index, block_number, block_timestamp,
+             condition_id, oracle, question_id, outcome_slot_count, payout_numerators)
+            VALUES %s
+            ON CONFLICT (tx_hash, log_index) DO NOTHING
+        """, insert_rows, page_size=1000)
 
-            # Bulk UPDATE markets via a VALUES table JOIN — one round-trip
-            # instead of one per resolution.
-            psycopg2.extras.execute_values(cur, """
-                UPDATE markets AS m SET
-                    resolved = TRUE,
-                    resolution_payout = v.payout::jsonb,
-                    resolved_at = v.resolved_at::timestamptz,
-                    updated_at = NOW()
-                FROM (VALUES %s) AS v(condition_id, payout, resolved_at)
-                WHERE m.condition_id = v.condition_id
-            """, market_updates, page_size=1000)
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
+        # Bulk UPDATE markets via a VALUES table JOIN — one round-trip
+        # instead of one per resolution.
+        psycopg2.extras.execute_values(cur, """
+            UPDATE markets AS m SET
+                resolved = TRUE,
+                resolution_payout = v.payout::jsonb,
+                resolved_at = v.resolved_at::timestamptz,
+                updated_at = NOW()
+            FROM (VALUES %s) AS v(condition_id, payout, resolved_at)
+            WHERE m.condition_id = v.condition_id
+        """, market_updates, page_size=1000)
 
     return len(insert_rows)
+
+
+def _process_split_or_merge_logs(logs, conn, table_name: str):
+    """Shared decoder for PositionSplit / PositionsMerge (identical layout).
+
+    ABI: ``event PositionSplit/PositionsMerge(address indexed stakeholder,
+    address collateralToken, bytes32 indexed parentCollectionId,
+    bytes32 indexed conditionId, uint256[] partition, uint256 amount)``.
+
+    Indexed (in topics):
+      topics[1] = stakeholder (address)
+      topics[2] = parentCollectionId (bytes32)
+      topics[3] = conditionId (bytes32)
+
+    Non-indexed data area:
+      slot 0 = collateralToken (address, right-padded in 32 bytes)
+      slot 1 = partition[] offset
+      slot 2 = amount (uint256)
+      then [partition.length, partition[0], partition[1], ...]
+    """
+    if not logs:
+        return 0
+
+    rows = []
+    for log in logs:
+        bn = log["blockNumber"]
+        ts = log_timestamp(log)
+
+        tx_hash = log["transactionHash"]
+        tx_hash = tx_hash.hex() if isinstance(tx_hash, bytes) else tx_hash
+        log_idx = log["logIndex"]
+
+        stakeholder = decode_indexed_address(log["topics"][1])
+        parent_coll = decode_indexed_bytes32(log["topics"][2])
+        condition_id = decode_indexed_bytes32(log["topics"][3])
+
+        data = log["data"] if isinstance(log["data"], bytes) else bytes(log["data"])
+        # Address sits in the last 20 bytes of the 32-byte slot.
+        collateral_token = "0x" + data[12:32].hex()
+        partition = decode_uint256_array(data, 1)
+        amount = decode_uint256(data, 2)
+
+        cid = condition_id if condition_id.startswith("0x") else "0x" + condition_id
+        pcoll = parent_coll if parent_coll.startswith("0x") else "0x" + parent_coll
+
+        rows.append((
+            tx_hash, log_idx, bn, ts,
+            stakeholder.lower(), collateral_token.lower(),
+            pcoll, cid,
+            json.dumps(partition), amount,
+        ))
+
+    with conn.cursor() as cur:
+        psycopg2.extras.execute_values(cur, f"""
+            INSERT INTO {table_name}
+            (tx_hash, log_index, block_number, block_timestamp,
+             stakeholder, collateral_token, parent_collection_id, condition_id,
+             partition, amount)
+            VALUES %s
+            ON CONFLICT (tx_hash, log_index) DO NOTHING
+        """, rows, page_size=1000)
+    return len(rows)
+
+
+def process_position_split_logs(logs, conn, cache: BatchCache):
+    """Insert PositionSplit logs into ``position_splits``."""
+    return _process_split_or_merge_logs(logs, conn, "position_splits")
+
+
+def process_positions_merge_logs(logs, conn, cache: BatchCache):
+    """Insert PositionsMerge logs into ``position_merges``."""
+    return _process_split_or_merge_logs(logs, conn, "position_merges")
 
 
 def process_redemption_logs(logs, conn, cache: BatchCache):
@@ -428,18 +493,13 @@ def process_redemption_logs(logs, conn, cache: BatchCache):
             json.dumps(index_sets), payout,
         ))
 
-    try:
-        with conn.cursor() as cur:
-            psycopg2.extras.execute_values(cur, """
-                INSERT INTO redemptions
-                (tx_hash, log_index, block_number, block_timestamp,
-                 redeemer, collateral_token, condition_id, index_sets, payout)
-                VALUES %s
-                ON CONFLICT (tx_hash, log_index) DO NOTHING
-            """, rows, page_size=1000)
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
+    with conn.cursor() as cur:
+        psycopg2.extras.execute_values(cur, """
+            INSERT INTO redemptions
+            (tx_hash, log_index, block_number, block_timestamp,
+             redeemer, collateral_token, condition_id, index_sets, payout)
+            VALUES %s
+            ON CONFLICT (tx_hash, log_index) DO NOTHING
+        """, rows, page_size=1000)
 
     return len(rows)

@@ -114,6 +114,41 @@ CREATE TABLE IF NOT EXISTS redemptions (
     UNIQUE(tx_hash, log_index)
 );
 
+-- PositionSplit events: USDC -> YES+NO token pair (the "missing leg" of PnL).
+-- Market makers mint inventory via this event; without it, their split cost
+-- looks like 0 and apparent PnL = (sell - buy) is overstated by the split
+-- amount. The stakeholder is the wallet that called splitPosition().
+CREATE TABLE IF NOT EXISTS position_splits (
+    id                   BIGSERIAL PRIMARY KEY,
+    tx_hash              TEXT NOT NULL,
+    log_index            INTEGER NOT NULL,
+    block_number         BIGINT NOT NULL,
+    block_timestamp      TIMESTAMPTZ NOT NULL,
+    stakeholder          TEXT NOT NULL,        -- wallet doing the split (USDC out)
+    collateral_token     TEXT NOT NULL,        -- almost always USDC.e on Polygon
+    parent_collection_id TEXT NOT NULL,
+    condition_id         TEXT NOT NULL,
+    partition            JSONB NOT NULL,       -- index sets (typically [1,2] for binary)
+    amount               NUMERIC NOT NULL,     -- raw 6-decimal USDC committed
+    UNIQUE(tx_hash, log_index)
+);
+
+-- PositionsMerge events: YES+NO -> USDC (the inverse of split).
+CREATE TABLE IF NOT EXISTS position_merges (
+    id                   BIGSERIAL PRIMARY KEY,
+    tx_hash              TEXT NOT NULL,
+    log_index            INTEGER NOT NULL,
+    block_number         BIGINT NOT NULL,
+    block_timestamp      TIMESTAMPTZ NOT NULL,
+    stakeholder          TEXT NOT NULL,        -- wallet doing the merge (USDC in)
+    collateral_token     TEXT NOT NULL,
+    parent_collection_id TEXT NOT NULL,
+    condition_id         TEXT NOT NULL,
+    partition            JSONB NOT NULL,
+    amount               NUMERIC NOT NULL,     -- raw 6-decimal USDC reclaimed
+    UNIQUE(tx_hash, log_index)
+);
+
 -- Indexer state: track how far we've synced
 CREATE TABLE IF NOT EXISTS indexer_state (
     key                 TEXT PRIMARY KEY,
@@ -179,6 +214,17 @@ CREATE INDEX IF NOT EXISTS idx_resolutions_ts ON resolutions(block_timestamp);
 CREATE INDEX IF NOT EXISTS idx_redemptions_redeemer ON redemptions(redeemer);
 CREATE INDEX IF NOT EXISTS idx_redemptions_condition ON redemptions(condition_id);
 CREATE INDEX IF NOT EXISTS idx_redemptions_ts ON redemptions(block_timestamp);
+CREATE INDEX IF NOT EXISTS idx_redemptions_block ON redemptions(block_number);
+
+-- position_splits / position_merges
+CREATE INDEX IF NOT EXISTS idx_psplits_stakeholder ON position_splits(stakeholder);
+CREATE INDEX IF NOT EXISTS idx_psplits_condition   ON position_splits(condition_id);
+CREATE INDEX IF NOT EXISTS idx_psplits_block       ON position_splits(block_number);
+CREATE INDEX IF NOT EXISTS idx_psplits_ts          ON position_splits(block_timestamp);
+CREATE INDEX IF NOT EXISTS idx_pmerges_stakeholder ON position_merges(stakeholder);
+CREATE INDEX IF NOT EXISTS idx_pmerges_condition   ON position_merges(condition_id);
+CREATE INDEX IF NOT EXISTS idx_pmerges_block       ON position_merges(block_number);
+CREATE INDEX IF NOT EXISTS idx_pmerges_ts          ON position_merges(block_timestamp);
 
 -- markets
 CREATE INDEX IF NOT EXISTS idx_markets_end_date ON markets(end_date);

@@ -21,7 +21,7 @@ silently skips blocks and leaves holes in the data.
 import time
 import traceback
 
-from db import get_conn, ensure_conn, get_state, set_state
+from db import get_conn, ensure_conn, get_state
 from indexer import (
     BatchCache,
     fetch_logs,
@@ -46,9 +46,23 @@ START_BLOCK = 44_000_000
 
 
 def _process_batch(conn, cache, from_block, to_block, totals):
-    """Fetch + insert all event types for one block range.
+    """Fetch + insert all event types for one block range, then advance
+    ``indexer_state`` atomically in the same transaction.
 
-    Raises on any error — the outer loop is responsible for backoff/retry.
+    All six event-type inserts and the ``unified_last_block`` update live in
+    one transaction so a crash between them can never leave
+    ``max(order_fills.block_number) > indexer_state.unified_last_block``
+    (which would cause redundant RPC re-scans on restart and, more importantly,
+    violates the invariant that committed data is reflected in the cursor).
+
+    Raises on any error — the outer loop is responsible for rollback +
+    backoff/retry.
+
+    NOTE on parallelism: we tried a ThreadPoolExecutor to run the 6 fetches
+    concurrently — counter-intuitively it made batches MUCH slower. Empirically
+    QuikNode serializes heavy eth_getLogs calls per client; 6 parallel large
+    requests end up queuing server-side while also contending for the client
+    TCP pool. Sequential with no sleep between batches beats it.
     """
     ctf_fills = fetch_logs(CTF_EXCHANGE, [TOPIC_ORDER_FILLED], from_block, to_block)
     ctf_matches = fetch_logs(CTF_EXCHANGE, [TOPIC_ORDERS_MATCHED], from_block, to_block)
@@ -63,6 +77,20 @@ def _process_batch(conn, cache, from_block, to_block, totals):
     totals["neg_matches"] += process_orders_matched_logs(neg_matches, "neg_risk", conn, cache)
     totals["resolutions"] += process_resolution_logs(res_logs, conn, cache)
     totals["redemptions"] += process_redemption_logs(redeem_logs, conn, cache)
+
+    # Stage the cursor update on the same connection so it commits (or rolls
+    # back) atomically with the six inserts above.
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO indexer_state (key, value, updated_at)
+            VALUES (%s, %s, NOW())
+            ON CONFLICT (key) DO UPDATE
+              SET value = EXCLUDED.value, updated_at = NOW()
+            """,
+            (STATE_KEY, str(to_block)),
+        )
+    conn.commit()
 
 
 def _backoff(attempt: int) -> int:
@@ -124,9 +152,9 @@ def run():
                 # The same range will be retried, guaranteeing no silent gaps.
                 continue
 
-            # Batch succeeded: reset failure counter, advance cursor + state.
+            # Batch succeeded (fills + state were committed atomically inside
+            # _process_batch). Reset failure counter and advance the cursor.
             consecutive_failures = 0
-            set_state(STATE_KEY, str(to_block))
 
             progress = (to_block - last_block) / max(current - last_block, 1) * 100
             fills = totals["ctf_fills"] + totals["neg_fills"]
@@ -136,7 +164,6 @@ def run():
                   f"res={totals['resolutions']:,} redeem={totals['redemptions']:,}")
 
             from_block = to_block + 1
-            time.sleep(0.05)  # gentle rate limit on the RPC
 
     finally:
         try:

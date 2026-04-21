@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex,nofollow">
 <title>Polymarket Explorer</title>
-<link rel="stylesheet" href="/static/app.css?v=2026-04-17-5">
+<link rel="stylesheet" href="/static/app.css?v=2026-04-21-1">
 </head>
 <body>
 
@@ -57,16 +57,10 @@
       不知道怎么问？点一个示例会把它填进输入框 —— 你可以改了再发。
       好问题通常包含 <strong>范围</strong>（哪些市场 / 哪段时间）、<strong>筛选条件</strong>（价格、成交量、地址等）、<strong>想要的指标</strong>（胜率 / ROI / 分布 / 排序）。
     </p>
-    <div class="example-chips">
-      <!-- Pattern: 具体市场 × 交易者画像 × 聚合 -->
-      <button class="example-chip">2024 Trump/Harris 大选市场里，投入金额 Top 20 的地址，分别盈亏多少？</button>
-      <!-- Pattern: 策略回测（时间窗口 + 价格阈值 + 分桶指标）-->
-      <button class="example-chip">已结算市场里，end_date 之后以 ≥0.95 买入的交易，按价位每 0.01 分桶，统计胜率和净 ROI</button>
-      <!-- Pattern: 时间窗口 × 排序 × 分布 -->
-      <button class="example-chip">最近 30 天成交量 Top 20 市场，按类别分布（政治 / 体育 / 加密 / 其他）</button>
-      <!-- Pattern: outlier detection（排序 + Top N + 上下文字段）-->
-      <button class="example-chip">已结算市场里，结算前 24 小时最后成交价与实际结果差距最大的 20 个市场，附成交量和持续时间</button>
-    </div>
+    <!-- Chips are injected by app.js::loadExamples() which fetches 3
+         random questions from /api/example_questions on each new session.
+         Pool of questions lives in chat/example_questions.py. -->
+    <div class="example-chips" id="example-chips"></div>
   </section>
 
   <div id="chat" class="chat" aria-live="polite"></div>
@@ -79,6 +73,6 @@
   </form>
 </main>
 
-<script src="/static/app.js?v=2026-04-17-5" defer></script>
+<script src="/static/app.js?v=2026-04-21-1" defer></script>
 </body>
 </html>

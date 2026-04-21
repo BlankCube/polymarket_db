@@ -40,6 +40,12 @@ MAX_TAIL_ROWS = 5
 MAX_CATEGORICAL_DISTINCT = 20
 MAX_TOP_CATEGORICAL = 5
 MAX_STDOUT_CHARS = 8000
+# Hard cap on rows persisted in `all_rows` for CSV download. Above this, the
+# CSV is truncated and the download endpoint emits a warning header. Keep
+# below the SQL LIMIT (5000 raw / aggregates higher) so most queries fit
+# entirely. JSONB max is 1GB; 50K rows × 50 cols × 50 chars ≈ 125MB worst
+# case — safe.
+MAX_ALL_ROWS = 50000
 
 
 def _to_jsonable(v):
@@ -95,8 +101,13 @@ def _categorical_stats(values: list) -> dict | None:
 
 
 def normalize_sql_result(columns: list[str], rows: list[list]) -> dict:
-    """Build a structured result object for SQL output."""
+    """Build a structured result object for SQL output.
+
+    `all_rows` (capped at MAX_ALL_ROWS) is included for CSV download — it is
+    NOT shown to the AI (format_for_ai strips it). The AI sees only
+    sample_head / sample_tail + aggregate stats."""
     n = len(rows)
+    capped_rows = rows[:MAX_ALL_ROWS]
     obj = {
         "kind": "sql",
         "row_count": n,
@@ -106,6 +117,8 @@ def normalize_sql_result(columns: list[str], rows: list[list]) -> dict:
             [[_to_jsonable(v) for v in r] for r in rows[-MAX_TAIL_ROWS:]]
             if n > MAX_HEAD_ROWS + MAX_TAIL_ROWS else []
         ),
+        "all_rows": [[_to_jsonable(v) for v in r] for r in capped_rows],
+        "all_rows_truncated": n > MAX_ALL_ROWS,
         "numeric_stats": {},
         "categorical_stats": {},
     }
@@ -153,5 +166,12 @@ def normalize_python_result(stdout: str) -> dict:
 
 
 def format_for_ai(result_obj: dict) -> str:
-    """Serialize the result object into a prompt-friendly JSON blob."""
-    return json.dumps(result_obj, ensure_ascii=False, indent=2, default=str)
+    """Serialize the result object into a prompt-friendly JSON blob.
+
+    Strips `all_rows` — that field is for CSV download only and would blow
+    out the AI's context window for any large query (and it's redundant
+    with sample_head / sample_tail / numeric_stats which the AI already
+    cites from)."""
+    pruned = {k: v for k, v in result_obj.items()
+              if k not in ("all_rows", "all_rows_truncated")}
+    return json.dumps(pruned, ensure_ascii=False, indent=2, default=str)

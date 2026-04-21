@@ -46,12 +46,20 @@ TOPIC_ORDERS_MATCHED = "0x63bf4d16b7fa898ef4c4b2b6d90fd201e9c56313b65638af6088d1
 TOPIC_CONDITION_RESOLUTION = "0xb44d84d3289691f71497564b85d4233648d9dbae8cbdbb4329f301c3a0185894"
 TOPIC_PAYOUT_REDEMPTION = "0x2682012a4a4f1973119f1c9b90745d1bd91fa2bab387344f044cb3586864d18d"
 TOPIC_CONDITION_PREPARATION = "0xab3760c3bd2bb38b5bcf54dc79802ed67338b4cf29f3054ded67ed24661e4177"
+# CTF position split / merge events. Emitted by CONDITIONAL_TOKENS when a
+# user converts USDC into a YES+NO pair (split) or back (merge). These are
+# the "missing leg" of PnL: a market maker mints inventory via splits and
+# sells both halves on the orderbook; without indexing splits, the buy
+# cost is invisible and apparent PnL is overstated by exactly the split
+# amount. Signatures match Gnosis CTF v1 ABI.
+TOPIC_POSITION_SPLIT  = "0x2e6bb91f8cbcda0c93623c54d0403a43514fabc40084ec96b6d5379a74786298"
+TOPIC_POSITIONS_MERGE = "0x6f13ca62553fcc2bcd2372180a43949c1e4cebba603901ede2f4e14f36b282ca"
 
 # Gamma API (market metadata)
 GAMMA_API = "https://gamma-api.polymarket.com"
 
 # Indexing settings
-LOG_BATCH_SIZE = int(os.environ.get("PM_LOG_BATCH_SIZE", "500"))  # blocks per eth_getLogs call
+LOG_BATCH_SIZE = int(os.environ.get("PM_LOG_BATCH_SIZE", "1250"))  # blocks per eth_getLogs call — empirically optimal on 2026-04-18 at ~1500 blocks/min; past 1250, QuikNode response time grows superlinearly and throughput drops.
 GAMMA_PAGE_SIZE = 100  # markets per API page
 
 # Indexer error-handling parameters.

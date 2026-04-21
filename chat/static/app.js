@@ -211,6 +211,7 @@
     $("chat").replaceChildren();
     $("examples").hidden = false;
     $("stage-indicator").hidden = true;
+    loadExamples();  // fresh random picks from /api/example_questions
     closeSidebarIfMobile();
     loadSessionList();
   }
@@ -231,7 +232,15 @@
           className: m.role === "user" ? "msg msg-user" : "msg msg-ai",
           text: m.content,
         });
-        if (m.role === "assistant") msg.appendChild(feedbackRow(state.sessionId));
+        if (m.role === "assistant") {
+          // If this turn produced a downloadable SQL execution, attach the
+          // CSV download row exactly like we do live (server-side
+          // persistence stamped m.execution onto this assistant message).
+          if (m.execution && m.execution.csv_url) {
+            msg.appendChild(downloadCsvRow(m.execution));
+          }
+          msg.appendChild(feedbackRow(state.sessionId));
+        }
         chat.appendChild(msg);
       }
       chat.scrollTop = chat.scrollHeight;
@@ -240,6 +249,56 @@
     } catch (e) {
       console.error("openSession failed", e);
     }
+  }
+
+  // ---------- Download CSV ----------
+  // Renders a row under an assistant message that ran a SQL query. Click
+  // fetches the CSV with the auth header (the endpoint is auth-gated and
+  // scoped to the current user) and triggers a browser download via an
+  // object URL. We can't use a plain <a download> because the bearer-token
+  // header isn't sent on a normal navigation.
+  function downloadCsvRow(payload) {
+    const row = el("div", { className: "download-row" });
+    const label = el("span", {
+      className: "download-label",
+      text: payload.truncated
+        ? `Result: ${payload.row_count.toLocaleString()} rows (truncated)`
+        : `Result: ${payload.row_count.toLocaleString()} rows`,
+    });
+    const btn = el("button", { className: "download-btn", text: "Download CSV" });
+    const note = el("span", { className: "download-note" });
+
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      const oldText = btn.textContent;
+      btn.textContent = "Downloading…";
+      try {
+        const res = await fetch(payload.csv_url, { headers: authHeaders() });
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        // Filename: server's Content-Disposition takes precedence in
+        // most browsers; we still set a fallback for the few that don't.
+        const fname = (payload.csv_url.split("/").slice(-2, -1)[0] || "result")
+          + ".csv";
+        a.download = "polymarket-explorer-" + fname;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+        btn.textContent = oldText;
+        btn.disabled = false;
+      } catch (e) {
+        note.textContent = "(failed: " + e.message + ")";
+        btn.textContent = oldText;
+        btn.disabled = false;
+      }
+    });
+
+    row.append(label, btn, note);
+    return row;
   }
 
   // ---------- Feedback ----------
@@ -273,21 +332,46 @@
   }
 
   // ---------- Examples ----------
-  // Clicking a chip fills the textarea so the user can edit before sending.
-  // This is deliberate: the chips demonstrate the "scope + filter + metric"
-  // pattern, and part of that pedagogy is letting the user tweak them.
-  for (const chip of document.querySelectorAll(".example-chip")) {
-    chip.addEventListener("click", () => {
-      if (state.busy) return;
-      const textarea = $("input");
-      textarea.value = chip.textContent.trim();
-      autoGrow();
-      textarea.focus();
-      // Move caret to the end so typing appends instead of overwriting.
-      const end = textarea.value.length;
-      textarea.setSelectionRange(end, end);
-    });
+  // Three random questions pulled from /api/example_questions (pool lives
+  // in chat/example_questions.py — curated by the dev, not AI-generated).
+  // Re-fetched on every new session so the user sees variety across
+  // visits. Clicking a chip fills the textarea so the user can edit
+  // before sending — the chips are starting points, not canned queries.
+  async function loadExamples() {
+    const container = $("example-chips");
+    if (!container) return;
+    container.replaceChildren();  // clear any prior chips
+    try {
+      const d = await api("/api/example_questions?count=3");
+      if (d.status !== "ok" || !Array.isArray(d.questions)) return;
+      for (const q of d.questions) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "example-chip";
+        btn.textContent = q;
+        container.appendChild(btn);
+      }
+    } catch (e) {
+      console.warn("loadExamples failed", e);
+    }
   }
+
+  // Event delegation for chip clicks — chips are created dynamically by
+  // loadExamples() so we can't bind individually at load time.
+  document.addEventListener("click", (ev) => {
+    const chip = ev.target.closest(".example-chip");
+    if (!chip) return;
+    if (state.busy) return;
+    const textarea = $("input");
+    textarea.value = chip.textContent.trim();
+    autoGrow();
+    textarea.focus();
+    const end = textarea.value.length;
+    textarea.setSelectionRange(end, end);
+  });
+
+  // Populate on initial page load too (before user clicks +New).
+  loadExamples();
 
   // ---------- Input / Send ----------
   const input = $("input");
@@ -386,6 +470,11 @@
     let fullText = "";
     let sawFirstText = false;
     let errNode = null;
+    // Carries the `execution` SSE payload (csv_url, row_count, truncated) if
+    // the server signalled a downloadable SQL result. Appended to the
+    // message AFTER text streaming completes so it doesn't get wiped by
+    // the streaming `aiMsg.textContent = fullText` updates.
+    let pendingDownload = null;
     state.abortController = new AbortController();
 
     const handleEvent = (name, data) => {
@@ -408,6 +497,12 @@
         fullText += data;
         aiMsg.textContent = fullText;
         chat.scrollTop = chat.scrollHeight;
+      } else if (name === "execution") {
+        // Server signalled a downloadable SQL execution. Stash for end-of-
+        // stream rendering: the streaming text path overwrites aiMsg's
+        // children on every chunk, so we must wait until streaming is
+        // done before appending the download button (alongside feedback).
+        if (data && data.csv_url) pendingDownload = data;
       } else if (name === "error") {
         if (!sawFirstText) {
           aiMsg.replaceChildren();
@@ -454,7 +549,18 @@
     }
 
     if (fullText.trim()) {
-      state.history.push({ role: "assistant", content: fullText });
+      // Preserve `execution` on the assistant message we push into
+      // state.history — otherwise every subsequent save_messages call
+      // (next turn via /api/chat, or tab close via /api/end-session)
+      // POSTs a history with execution stripped, overwriting the
+      // server-persisted field and making the Download CSV button vanish
+      // on session reload.
+      const assistantMsg = { role: "assistant", content: fullText };
+      if (pendingDownload) {
+        assistantMsg.execution = pendingDownload;
+        aiMsg.appendChild(downloadCsvRow(pendingDownload));
+      }
+      state.history.push(assistantMsg);
       aiMsg.appendChild(feedbackRow(state.sessionId));
     }
     // Cap history length to keep prompt costs bounded.

@@ -21,6 +21,7 @@ silently skips blocks and leaves holes in the data.
 import argparse
 import time
 import traceback
+from concurrent.futures import ThreadPoolExecutor
 
 from db import get_conn, ensure_conn, get_state
 from indexer import (
@@ -108,17 +109,160 @@ def _process_batch(conn, cache, from_block, to_block, totals):
     conn.commit()
 
 
+# ===========================================================================
+# Parallel variant
+# ===========================================================================
+#
+# Single-threaded _process_batch is CPU-bound per batch: one PG backend pinned
+# at 100% doing B-tree maintenance and one Python process pinned decoding logs.
+# On an 8-vCPU box this uses 2 cores out of 8. Parallelising the INSERT phase
+# across worker connections lets 4-6 cores actually work.
+#
+# Safety: every INSERT uses ``ON CONFLICT (tx_hash, log_index) DO NOTHING``, so
+# re-inserting the same row is a no-op. That makes the old "one atomic
+# transaction for all 8 event types + watermark" invariant unnecessary — we
+# can commit each worker independently and still have correctness:
+#
+#   * If any worker fails, the whole batch is considered failed and the
+#     watermark does NOT advance; the outer retry loop re-runs the same range
+#     and the already-committed rows get ON CONFLICT-skipped.
+#   * If Python crashes after some workers commit but before the watermark
+#     update, same story on restart.
+#
+# Jobs are grouped BY TARGET TABLE so no two workers ever write the same table
+# concurrently (avoids B-tree leaf contention):
+#
+#   W1  ctf_fills + neg_fills           → order_fills
+#   W2  ctf_matches + neg_matches       → order_matches
+#   W3  resolution + redemption         → resolutions + redemptions
+#   W4  split + merge                   → position_splits + position_merges
+#
+# Fetches stay sequential — QuikNode serializes heavy eth_getLogs per client,
+# parallel RPC makes things slower (verified before, see _process_batch
+# docstring).
+
+
+def _job_order_fills(conn, ctf_logs, neg_logs):
+    cache = BatchCache(conn)
+    n_ctf = process_order_filled_logs(ctf_logs, "ctf", conn, cache)
+    n_neg = process_order_filled_logs(neg_logs, "neg_risk", conn, cache)
+    conn.commit()
+    return {"ctf_fills": n_ctf, "neg_fills": n_neg}
+
+
+def _job_order_matches(conn, ctf_logs, neg_logs):
+    cache = BatchCache(conn)
+    n_ctf = process_orders_matched_logs(ctf_logs, "ctf", conn, cache)
+    n_neg = process_orders_matched_logs(neg_logs, "neg_risk", conn, cache)
+    conn.commit()
+    return {"ctf_matches": n_ctf, "neg_matches": n_neg}
+
+
+def _job_ct_events(conn, res_logs, redeem_logs):
+    cache = BatchCache(conn)
+    n_res = process_resolution_logs(res_logs, conn, cache)
+    n_red = process_redemption_logs(redeem_logs, conn, cache)
+    conn.commit()
+    return {"resolutions": n_res, "redemptions": n_red}
+
+
+def _job_positions(conn, split_logs, merge_logs):
+    cache = BatchCache(conn)
+    n_s = process_position_split_logs(split_logs, conn, cache)
+    n_m = process_positions_merge_logs(merge_logs, conn, cache)
+    conn.commit()
+    return {"splits": n_s, "merges": n_m}
+
+
+def _process_batch_parallel(main_conn, worker_conns, pool,
+                            from_block, to_block, totals):
+    """Parallel variant of ``_process_batch``. Four worker connections handle
+    the INSERTs concurrently, one per target-table group. Watermark still
+    advances on the main connection, ONLY after all 4 workers commit.
+
+    Raises on any worker failure — outer loop handles rollback/retry.
+    """
+    # Fetch all 8 event types sequentially (parallel RPC hurts QuikNode).
+    ctf_fills = fetch_logs(CTF_EXCHANGE, [TOPIC_ORDER_FILLED], from_block, to_block)
+    ctf_matches = fetch_logs(CTF_EXCHANGE, [TOPIC_ORDERS_MATCHED], from_block, to_block)
+    neg_fills = fetch_logs(NEG_RISK_CTF_EXCHANGE, [TOPIC_ORDER_FILLED], from_block, to_block)
+    neg_matches = fetch_logs(NEG_RISK_CTF_EXCHANGE, [TOPIC_ORDERS_MATCHED], from_block, to_block)
+    res_logs = fetch_logs(CONDITIONAL_TOKENS, [TOPIC_CONDITION_RESOLUTION], from_block, to_block)
+    redeem_logs = fetch_logs(CONDITIONAL_TOKENS, [TOPIC_PAYOUT_REDEMPTION], from_block, to_block)
+    split_logs = fetch_logs(CONDITIONAL_TOKENS, [TOPIC_POSITION_SPLIT], from_block, to_block)
+    merge_logs = fetch_logs(CONDITIONAL_TOKENS, [TOPIC_POSITIONS_MERGE], from_block, to_block)
+
+    # Ensure each worker conn is alive before handing it to a thread.
+    for i in range(4):
+        worker_conns[i] = ensure_conn(worker_conns[i])
+
+    futures = [
+        pool.submit(_job_order_fills,   worker_conns[0], ctf_fills,   neg_fills),
+        pool.submit(_job_order_matches, worker_conns[1], ctf_matches, neg_matches),
+        pool.submit(_job_ct_events,     worker_conns[2], res_logs,    redeem_logs),
+        pool.submit(_job_positions,     worker_conns[3], split_logs,  merge_logs),
+    ]
+    # .result() re-raises any worker exception; as_completed is tempting but
+    # we want to wait for ALL to finish (so partial commits already landed
+    # can be accounted for) before deciding the batch failed.
+    errors = []
+    partial_totals = {}
+    for f in futures:
+        try:
+            partial_totals.update(f.result())
+        except Exception as e:
+            errors.append(e)
+    if errors:
+        # Merge whatever deltas did succeed into totals so logging is honest,
+        # then raise. Outer loop won't advance the watermark → retry next run
+        # will re-insert these rows as ON CONFLICT no-ops.
+        for k, v in partial_totals.items():
+            totals[k] += v
+        raise errors[0]
+    for k, v in partial_totals.items():
+        totals[k] += v
+
+    # All workers committed. Advance watermark on main conn.
+    with main_conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO indexer_state (key, value, updated_at)
+            VALUES (%s, %s, NOW())
+            ON CONFLICT (key) DO UPDATE
+              SET value = EXCLUDED.value, updated_at = NOW()
+            """,
+            (STATE_KEY, str(to_block)),
+        )
+    main_conn.commit()
+
+
 def _backoff(attempt: int) -> int:
     """Return seconds to wait before retry ``attempt`` (1-indexed)."""
     idx = min(attempt - 1, len(INDEXER_BACKOFF_SECONDS) - 1)
     return INDEXER_BACKOFF_SECONDS[idx]
 
 
-def run():
+def run(workers: int = 1):
+    """Catch-up scan from ``unified_last_block`` to chain tip.
+
+    ``workers``:
+        1 → single-threaded path (historical behaviour).
+        ≥2 → parallel path: all 8 event fetches sequential (QuikNode
+             constraint), INSERTs fanned out across 4 worker connections
+             grouped by target table. See ``_process_batch_parallel`` for
+             the safety argument.
+    """
     last_block = int(get_state(STATE_KEY, str(START_BLOCK)))
     current = get_current_block()
     from_block = last_block + 1
     conn = get_conn()
+
+    # Parallel path uses 4 persistent worker connections + a thread pool.
+    # Fixed at 4 because we group work by target table (see
+    # _process_batch_parallel); more workers would just sit idle.
+    parallel = workers >= 2
+    worker_conns = [get_conn() for _ in range(4)] if parallel else []
+    pool = ThreadPoolExecutor(max_workers=4) if parallel else None
 
     totals = {
         "ctf_fills": 0, "ctf_matches": 0,
@@ -127,7 +271,8 @@ def run():
         "splits": 0, "merges": 0,
     }
 
-    print(f"Unified indexer: block {from_block:,} -> {current:,} "
+    mode = f"parallel x4 workers" if parallel else "single-threaded"
+    print(f"Unified indexer ({mode}): block {from_block:,} -> {current:,} "
           f"({current - from_block:,} blocks)")
 
     consecutive_failures = 0
@@ -141,12 +286,16 @@ def run():
             # iteration, not the whole process.
             conn = ensure_conn(conn)
 
-            # Fresh cache per batch keeps memory bounded; there is no value
-            # in caching block timestamps across batches.
-            cache = BatchCache(conn)
-
             try:
-                _process_batch(conn, cache, from_block, to_block, totals)
+                if parallel:
+                    _process_batch_parallel(
+                        conn, worker_conns, pool,
+                        from_block, to_block, totals,
+                    )
+                else:
+                    # Fresh cache per batch keeps memory bounded.
+                    cache = BatchCache(conn)
+                    _process_batch(conn, cache, from_block, to_block, totals)
             except Exception as e:
                 consecutive_failures += 1
                 if consecutive_failures > INDEXER_MAX_CONSECUTIVE_FAILURES:
@@ -163,13 +312,20 @@ def run():
                     conn.rollback()
                 except Exception:
                     pass
+                # Worker conns may have committed partial data; that's OK
+                # (ON CONFLICT DO NOTHING on retry). But roll back any stray
+                # in-progress transaction so the conn is usable next iter.
+                for wc in worker_conns:
+                    try:
+                        wc.rollback()
+                    except Exception:
+                        pass
                 time.sleep(wait)
                 # IMPORTANT: do NOT advance from_block or set_state on failure.
                 # The same range will be retried, guaranteeing no silent gaps.
                 continue
 
-            # Batch succeeded (fills + state were committed atomically inside
-            # _process_batch). Reset failure counter and advance the cursor.
+            # Batch succeeded. Reset failure counter and advance the cursor.
             consecutive_failures = 0
 
             progress = (to_block - last_block) / max(current - last_block, 1) * 100
@@ -178,11 +334,19 @@ def run():
             print(f"  Block {to_block:,}/{current:,} ({progress:.1f}%) | "
                   f"fills={fills:,} matches={matches:,} "
                   f"res={totals['resolutions']:,} redeem={totals['redemptions']:,} "
-                  f"split={totals['splits']:,} merge={totals['merges']:,}")
+                  f"split={totals['splits']:,} merge={totals['merges']:,}",
+                  flush=True)
 
             from_block = to_block + 1
 
     finally:
+        if pool is not None:
+            pool.shutdown(wait=False)
+        for wc in worker_conns:
+            try:
+                wc.close()
+            except Exception:
+                pass
         try:
             conn.close()
         except Exception:
@@ -191,7 +355,7 @@ def run():
     print(f"\nDone. Totals: {totals}")
 
 
-def run_loop(interval_sec: int):
+def run_loop(interval_sec: int, workers: int = 1):
     """Daemon: run() to catch-up, then poll the chain every ``interval_sec``
     seconds for new blocks. Mirrors ``rollup.py --loop``.
 
@@ -203,10 +367,11 @@ def run_loop(interval_sec: int):
     blocks behind the head on average (one batch's worth). Go shorter for
     tighter tailing; longer to reduce RPC usage.
     """
-    print(f"Unified indexer daemon starting (interval={interval_sec}s)", flush=True)
+    print(f"Unified indexer daemon starting (interval={interval_sec}s, "
+          f"workers={workers})", flush=True)
     while True:
         try:
-            run()
+            run(workers=workers)
         except Exception as e:
             print(f"⚠ run() crashed: {type(e).__name__}: {e}", flush=True)
             traceback.print_exc()
@@ -218,12 +383,18 @@ def main():
     p.add_argument("--loop", nargs="?", const=30, type=int,
                    help="Run as daemon; optional interval in seconds "
                         "(default 30). Without --loop, exits on catch-up.")
+    p.add_argument("--workers", type=int, default=1,
+                   help="Number of parallel INSERT workers (default 1 = "
+                        "single-threaded historical behaviour). Set to 2+ to "
+                        "fan INSERTs out across 4 worker connections grouped "
+                        "by target table. See _process_batch_parallel for "
+                        "the safety argument.")
     args = p.parse_args()
 
     if args.loop is not None:
-        run_loop(args.loop)
+        run_loop(args.loop, workers=args.workers)
     else:
-        run()
+        run(workers=args.workers)
 
 
 if __name__ == "__main__":

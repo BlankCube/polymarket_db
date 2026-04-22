@@ -84,12 +84,34 @@ minimum schema size.
 | `updated_at` | TIMESTAMPTZ | bookkeeping |
 
 Indexes: `(total_volume_usd DESC)`, `(last_active DESC)`,
-`(maker_volume_usd DESC)`, `(taker_volume_usd DESC)`.
+`(maker_volume_usd DESC)`, `(taker_volume_usd DESC)`,
+`(total_redemption_usd DESC)`, `(net_pnl_usd DESC) WHERE net_pnl_usd IS NOT NULL`.
 
-- **Size**: ~150K wallets × ~250 bytes = **~38 MB**.
+**Extensions added after initial build (stages F and G):**
+
+| column | type | source | added |
+|---|---|---|---|
+| `total_redemption_usd` | NUMERIC | `redemptions.payout / 1e6` | stage F (2026-04) |
+| `redemption_count` | INTEGER | `COUNT(redemptions)` | stage F |
+| `last_redemption_at` | TIMESTAMPTZ | `MAX(redemptions.block_timestamp)` | stage F |
+| `total_split_usd` | NUMERIC | `position_splits.amount / 1e6` | stage G (2026-04-22) |
+| `split_count` | INTEGER | `COUNT(position_splits)` | stage G |
+| `total_merge_usd` | NUMERIC | `position_merges.amount / 1e6` | stage G |
+| `merge_count` | INTEGER | `COUNT(position_merges)` | stage G |
+| `net_pnl_usd` | NUMERIC | derived (see below) | stage G |
+
+**`net_pnl_usd` formula**:
+`(sell_volume_usd + total_redemption_usd + total_merge_usd) − (buy_volume_usd + total_split_usd + total_fees_paid_usd)`
+
+Realised cash-flow PnL only. Does NOT mark open positions to market and
+excludes gas. Recomputed inside `RECOMPUTE_A_DERIVED_SQL` for the
+affected-wallet set each cycle (plus every wallet once via `--backfill-g`).
+
+- **Size**: ~1.8M wallets × ~320 bytes = **~580 MB**.
 - **Initial backfill**: `GROUP BY wallet` over 200M rows with buy/sell
   CASE aggregates. With `work_mem = 1 GB`, hash-aggregate fits entirely
-  in RAM. Estimated **10-20 min**.
+  in RAM. Estimated **10-20 min**. One-shot G backfill over 136 M
+  splits + 23 M merges adds ~3-5 min.
 - **Incremental**: seconds per run.
 
 Answers:
@@ -99,6 +121,7 @@ Answers:
 - "most fee-generating wallets"
 - "wallets active in last N days"
 - "wallets that traded ≥ X distinct markets"
+- "top / bottom realised PnL wallets" (`ORDER BY net_pnl_usd DESC / ASC`)
 
 ---
 

@@ -196,8 +196,10 @@ async def _run_step3_with_retry(messages, prev_ai_msg, log,
         description, code, code_type = _split_description_and_code(raw_response)
 
         log("step3_generate", {
-            "type": code_type, "code": code[:2000],
+            "type": code_type, "code": code[:8000],
+            "code_len": len(code),
             "description": description[:1000],
+            "description_len": len(description),
             "attempt": attempts,
         })
 

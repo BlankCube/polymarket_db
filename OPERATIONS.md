@@ -18,11 +18,12 @@ no cron.** Reboots require manual restart (see `Cold start` below).
 
 | # | Process | PID file mechanism | Logs | Purpose |
 |---|---|---|---|---|
-| 1 | `unified_indexer.py` | none (track via `ps`) | `indexer_unified.log` | Incrementally pulls CTF / Neg-Risk trades, matches, resolutions, redemptions from Polygon RPC into PG |
+| 1 | `unified_indexer.py` | none (track via `ps`) | `indexer_unified.log` | Incrementally pulls CTF / Neg-Risk trades, matches, resolutions, redemptions, **splits, merges** from Polygon RPC into PG (8 event types) |
 | 2 | `rollup.py --loop 60` | none | `rollup.log` | Every 60 s, rolls new `order_fills` + `redemptions` into 5 aggregate tables (A–F) |
-| 3 | `backfill_splits_merges.py --batch-size 2500` | none | `splits_merges_backfill.log` | **One-shot backfill** (in progress as of 2026-04-21). Catching `position_splits` + `position_merges` up from block 44M. Will be merged into `unified_indexer.py` once it catches chain tip |
-| 4 | `uvicorn app:app --port 8080 --ssl-*` | none | `webapp.log` | FastAPI chat UI + `/api/execution/<id>/csv` download endpoint |
-| 5 | PostgreSQL 16 | system service | `/var/log/postgresql/…` | `polymarket_db` |
+| 3 | `uvicorn app:app --port 8080 --ssl-*` | none | `webapp.log` | FastAPI chat UI + `/api/execution/<id>/csv` download endpoint |
+| 4 | PostgreSQL 16 | system service | `/var/log/postgresql/…` | `polymarket_db` |
+
+**Retired 2026-04-22:** `backfill_splits_merges.py` (one-shot) finished catching `position_splits`/`position_merges` up past `unified_last_block`; the 2 topic filters are now part of `_process_batch` and the `splits_merges_synced_block` watermark row has been deleted from `indexer_state`. The script is kept for reference only — do not re-run.
 
 All Python daemons use `/home/ubuntu/polymarket-db/venv/bin/python`.
 **Never use system `python3`** — it lacks psycopg2 / anthropic / web3.
@@ -35,7 +36,7 @@ Copy-paste this block to get one-page health:
 
 ```bash
 echo "=== daemons ==="
-ps -ef | grep -v grep | grep -E 'python.*(unified_indexer|rollup\.py|backfill_splits|uvicorn app)' \
+ps -ef | grep -v grep | grep -E 'python.*(unified_indexer|rollup\.py|uvicorn app)' \
     | awk '{printf "  %-7s %-9s %s %s %s\n", $2, $7, $8, $9, $10}'
 
 echo
@@ -47,7 +48,7 @@ from db import get_conn
 c = get_conn()
 with c.cursor() as cur:
     cur.execute("""SELECT key, value, updated_at FROM indexer_state
-                   WHERE key IN ('unified_last_block','rollup_synced_block','splits_merges_synced_block')
+                   WHERE key IN ('unified_last_block','rollup_synced_block')
                    ORDER BY key""")
     for k, v, t in cur.fetchall():
         age = (datetime.datetime.now(t.tzinfo) - t).total_seconds()
@@ -58,7 +59,7 @@ PY
 
 echo
 echo "=== logs (last line of each) ==="
-for f in indexer_unified.log rollup.log splits_merges_backfill.log webapp.log; do
+for f in indexer_unified.log rollup.log webapp.log; do
     echo "--- $f ---"
     tail -1 /home/ubuntu/polymarket-db/$f
 done
@@ -68,7 +69,6 @@ Healthy indicators:
 
 - `unified_last_block` age < ~5 min (daemon still making forward progress)
 - `rollup_synced_block` within 1–2 batches of `unified_last_block` (≤ 2500 blocks)
-- `splits_merges_synced_block` advancing steadily (during backfill only)
 - webapp `GET /api/example_questions?count=1` → HTTP 200 in < 100 ms
 
 ---
@@ -113,13 +113,8 @@ sleep 5 && tail -3 indexer_unified.log
 nohup venv/bin/python -u database/rollup.py --loop 60 >> rollup.log 2>&1 &
 sleep 5 && tail -3 rollup.log
 
-# 3. Split/merge backfill (ONLY while we're still catching up; skip once merged)
-cd /home/ubuntu/polymarket-db/database
-nohup ../venv/bin/python -u backfill_splits_merges.py --batch-size 2500 \
-    >> ../splits_merges_backfill.log 2>&1 &
-sleep 5 && tail -3 ../splits_merges_backfill.log
-
-# 4. Webapp
+# 3. Webapp (retired: the standalone splits/merges backfill — unified_indexer
+#    now handles those two event types itself)
 cd /home/ubuntu/polymarket-db/chat
 nohup ../venv/bin/uvicorn app:app --host 0.0.0.0 --port 8080 \
     --ssl-keyfile ../certs/key.pem --ssl-certfile ../certs/cert.pem \
@@ -179,7 +174,6 @@ resume. Never write data past their watermark.
 |---|---|---|---|
 | `indexer_unified.log` | unified_indexer | plain text, one batch per line | Unbounded. `echo -n > file` to truncate while running (preserves fd) |
 | `rollup.log` | rollup daemon | plain text, per-cycle | Same |
-| `splits_merges_backfill.log` | backfill script | plain text, per-batch | Delete after backfill catches up |
 | `webapp.log` | uvicorn stdout | Starlette INFO lines + tracebacks | Same truncation rule |
 | `feedback/logs/chat.jsonl` | app.py logger | JSONL — one event per AI stage / tool call | Truncate **in place** with `> file` so the live uvicorn fd stays valid (see `MEMORY.md`: `mv` breaks fd, writes orphan) |
 | `feedback/logs/chat.archive.jsonl` | manual | append-only | Cold archive of analyzed sessions. Keep forever |
@@ -215,7 +209,7 @@ cat /home/ubuntu/polymarket-db/feedback/logs/chat.jsonl >> \
 - `order_fills` ~200 M rows (CTF + Neg-Risk fills)
 - `order_matches` ~50 M rows
 - `redemptions` ~16 M rows
-- `position_splits` / `position_merges` (backfill in progress — see `splits_merges_synced_block`)
+- `position_splits` ~136 M rows / `position_merges` ~23 M rows (kept current by `unified_indexer`)
 - `backtest_trades` materialized view, ~600 K rows
 - 5 rollups: `wallet_volume_rollup` (1.8 M) / `market_volume_rollup` (~223 K) / `wallet_market_pairs` (~34 M) / `wallet_monthly_stats` (~5 M) / `market_monthly_stats` (~214 K)
 - App tables: `users`, `user_sessions`, `session_executions`, `indexer_state`

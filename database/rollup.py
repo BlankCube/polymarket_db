@@ -65,39 +65,48 @@ CREATE TABLE IF NOT EXISTS wallet_volume_rollup (
     buy_trade_count         BIGINT NOT NULL DEFAULT 0,
     sell_trade_count        BIGINT NOT NULL DEFAULT 0,
     total_fees_paid_usd     NUMERIC NOT NULL DEFAULT 0,
-    -- Redemptions delta — updated incrementally by UPDATE_F_SQL. Numbers
-    -- are direct from `redemptions` table; trustworthy.
-    --
-    -- PnL is intentionally NOT stored here yet. The naive formula
-    -- `sell − buy + redemption − fees` undercounts costs for any wallet
-    -- that uses CTF `PositionSplit` (USDC → YES+NO pair) or `PositionsMerge`
-    -- (YES+NO → USDC) — i.e. every market maker. The indexer doesn't track
-    -- those events. Until it does, any "PnL" column would be misleading
-    -- (the top wallet's split-and-sell-spread strategy reads as +$4B).
+    -- Redemption / split / merge deltas — updated incrementally by
+    -- UPDATE_F_SQL (redemption) and UPDATE_G_*_SQL (split, merge). All three
+    -- come directly from on-chain events via `unified_indexer`; no estimation.
     total_redemption_usd    NUMERIC NOT NULL DEFAULT 0,
     redemption_count        INTEGER NOT NULL DEFAULT 0,
     last_redemption_at      TIMESTAMPTZ,
+    -- Inventory leg: CTF `PositionSplit` (USDC → YES+NO) is a cost; `PositionsMerge`
+    -- (YES+NO → USDC) is a return. Both event types are indexed since the
+    -- splits/merges topics were folded into `unified_indexer` on 2026-04-22.
+    total_split_usd         NUMERIC NOT NULL DEFAULT 0,
+    split_count             INTEGER NOT NULL DEFAULT 0,
+    total_merge_usd         NUMERIC NOT NULL DEFAULT 0,
+    merge_count             INTEGER NOT NULL DEFAULT 0,
+    -- Closed-form realised PnL: cash that left the wallet (buy, split, fees)
+    -- vs cash that arrived (sell, redeem, merge). Does NOT include unrealised
+    -- mark-to-market on still-open positions, and ignores gas cost (out of
+    -- scope for on-chain PG data). Recomputed in RECOMPUTE_A_DERIVED_SQL.
+    net_pnl_usd             NUMERIC,
     first_active            TIMESTAMPTZ,
     last_active             TIMESTAMPTZ,
     active_months           INTEGER NOT NULL DEFAULT 0,
     markets_touched         INTEGER NOT NULL DEFAULT 0,
     updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
--- ALTERs for upgrading an existing deployment that pre-dates the
--- redemption columns. IF NOT EXISTS makes these idempotent.
+-- ALTERs for upgrading an existing deployment. IF NOT EXISTS makes them
+-- idempotent. Keep in order: columns added later come later.
 ALTER TABLE wallet_volume_rollup
     ADD COLUMN IF NOT EXISTS total_redemption_usd NUMERIC NOT NULL DEFAULT 0,
     ADD COLUMN IF NOT EXISTS redemption_count     INTEGER NOT NULL DEFAULT 0,
-    ADD COLUMN IF NOT EXISTS last_redemption_at   TIMESTAMPTZ;
--- net_pnl_usd was added in an earlier iteration but the formula is
--- unreliable until split/merge events are indexed (see column-block comment
--- above). Drop the column + its index so we don't expose a misleading number.
-ALTER TABLE wallet_volume_rollup DROP COLUMN IF EXISTS net_pnl_usd;
+    ADD COLUMN IF NOT EXISTS last_redemption_at   TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS total_split_usd      NUMERIC NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS split_count          INTEGER NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS total_merge_usd      NUMERIC NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS merge_count          INTEGER NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS net_pnl_usd          NUMERIC;
 CREATE INDEX IF NOT EXISTS idx_wvr_total_vol    ON wallet_volume_rollup (total_volume_usd DESC);
 CREATE INDEX IF NOT EXISTS idx_wvr_last_active  ON wallet_volume_rollup (last_active DESC);
 CREATE INDEX IF NOT EXISTS idx_wvr_maker_vol    ON wallet_volume_rollup (maker_volume_usd DESC);
 CREATE INDEX IF NOT EXISTS idx_wvr_taker_vol    ON wallet_volume_rollup (taker_volume_usd DESC);
 CREATE INDEX IF NOT EXISTS idx_wvr_redemption   ON wallet_volume_rollup (total_redemption_usd DESC);
+CREATE INDEX IF NOT EXISTS idx_wvr_net_pnl      ON wallet_volume_rollup (net_pnl_usd DESC)
+    WHERE net_pnl_usd IS NOT NULL;
 -- Index on redemptions.block_number so the delta range scan in UPDATE_F_SQL
 -- doesn't full-scan 16M rows. The existing redemptions indexes cover redeemer
 -- and condition_id; block_number wasn't covered before the rollup was added.
@@ -554,15 +563,86 @@ RETURNING wallet
 """
 
 
+# Collateral tokens treated as 6-decimal USD pegs for PnL. Every legitimate
+# Polymarket market resolves in one of these:
+#   * USDC.e on Polygon (the canonical CTF market collateral)
+#   * NegRisk-wrapped USDC (the Neg-Risk exchange's adapter; still 6 decimals)
+# Other tokens appear in the raw event stream — most notably WMATIC, which
+# has 18 decimals — from test / one-off deployments and protocol-internal
+# movements. Aggregating them with /1e6 blows up PnL by up to 1e12x (see the
+# "0x8f3f... / -$1T" outlier discovered on first backfill). Keep the list
+# explicit so future drift (new collateral token launched) forces a review
+# rather than silently breaking the math.
+_USD_COLLATERAL_TOKENS_SQL = (
+    "('0x2791bca1f2de4661ed88a30c99a7a9449aa84174',"   # USDC.e (Polygon bridged USDC, 6 dec)
+    " '0x3a3bd7bb9528e159577f7c2e685cc81a765002e2')"   # NegRiskAdapter wrapper (6 dec)
+)
+
+
+UPDATE_G_SPLIT_SQL = f"""
+-- G(split). Delta of PositionSplit events → total_split_usd / split_count per
+-- stakeholder. `amount` is the collateral-token low-level uint; we FILTER to
+-- the 6-decimal USD-pegged collaterals (see _USD_COLLATERAL_TOKENS_SQL) so
+-- /1e6 is always correct. Same block_number window as UPDATE_F_SQL so
+-- redemption + split + merge + fills all advance together in the rollup txn.
+INSERT INTO wallet_volume_rollup (
+    wallet, total_split_usd, split_count, updated_at
+)
+SELECT stakeholder,
+       SUM(amount) / 1e6,
+       COUNT(*)::int,
+       NOW()
+FROM position_splits
+WHERE block_number > %(from)s AND block_number <= %(to)s
+  AND collateral_token IN {_USD_COLLATERAL_TOKENS_SQL}
+GROUP BY stakeholder
+ON CONFLICT (wallet) DO UPDATE SET
+    total_split_usd = wallet_volume_rollup.total_split_usd + EXCLUDED.total_split_usd,
+    split_count     = wallet_volume_rollup.split_count     + EXCLUDED.split_count,
+    updated_at      = NOW()
+RETURNING wallet
+"""
+
+
+UPDATE_G_MERGE_SQL = f"""
+-- G(merge). Delta of PositionsMerge events → total_merge_usd / merge_count
+-- per stakeholder. Mirrors UPDATE_G_SPLIT_SQL including the USD-collateral filter.
+INSERT INTO wallet_volume_rollup (
+    wallet, total_merge_usd, merge_count, updated_at
+)
+SELECT stakeholder,
+       SUM(amount) / 1e6,
+       COUNT(*)::int,
+       NOW()
+FROM position_merges
+WHERE block_number > %(from)s AND block_number <= %(to)s
+  AND collateral_token IN {_USD_COLLATERAL_TOKENS_SQL}
+GROUP BY stakeholder
+ON CONFLICT (wallet) DO UPDATE SET
+    total_merge_usd = wallet_volume_rollup.total_merge_usd + EXCLUDED.total_merge_usd,
+    merge_count     = wallet_volume_rollup.merge_count     + EXCLUDED.merge_count,
+    updated_at      = NOW()
+RETURNING wallet
+"""
+
+
 RECOMPUTE_A_DERIVED_SQL = """
--- A derived columns: markets_touched (from C), active_months (from D).
--- net_pnl_usd was here briefly but removed: see the column-block comment
--- at the top of CREATE_TABLES_SQL for why (split/merge unindexed).
--- When %(wallets)s is NULL → update every wallet (used by full-rebuild).
--- Otherwise → only wallets whose PK appears in the delta.
+-- A derived columns:
+--   markets_touched (from C), active_months (from D), and closed-form
+--   realised net_pnl_usd.
+-- Formula: cash IN (sell + redemption + merge) − cash OUT (buy + split + fees).
+-- Excludes unrealised mark-to-market on open positions and gas cost. Split
+-- cost is the USDC locked to mint a YES+NO pair; merge return is the USDC
+-- recovered by burning one. Without those legs, top market-maker wallets
+-- read as fake +$B because they sell inventory they never "paid" for.
+-- When %(wallets)s is NULL → update every wallet (used by --rebuild and the
+-- one-shot --backfill-g pass). Otherwise → only wallets whose PK appears in
+-- the delta.
 UPDATE wallet_volume_rollup w SET
     markets_touched = COALESCE((SELECT COUNT(*) FROM wallet_market_pairs p WHERE p.wallet = w.wallet), 0),
-    active_months   = COALESCE((SELECT COUNT(*) FROM wallet_monthly_stats d WHERE d.wallet = w.wallet), 0)
+    active_months   = COALESCE((SELECT COUNT(*) FROM wallet_monthly_stats d WHERE d.wallet = w.wallet), 0),
+    net_pnl_usd     = (w.sell_volume_usd + w.total_redemption_usd + w.total_merge_usd)
+                    - (w.buy_volume_usd  + w.total_split_usd      + w.total_fees_paid_usd)
 WHERE %(wallets)s::text[] IS NULL
    OR w.wallet = ANY(%(wallets)s::text[])
 """
@@ -721,12 +801,23 @@ def run_once(full_rebuild: bool = False):
         # F: redemption delta into wallet_volume_rollup. Returns wallets
         # whose redemption sums changed — these may differ from A's set
         # (a wallet can redeem in a block range without trading in it).
-        # Union with A's set so net_pnl_usd recompute covers both.
+        # G(split)/G(merge): inventory leg — split is a cost, merge is a
+        # return. Also not 1:1 with A's wallets (a market maker can split
+        # without closing a fill in the same window). All four sets union
+        # into the derived recompute scope so net_pnl_usd covers every
+        # wallet whose source numbers changed this batch.
         affected_redeemers = _run_upsert_collect_pks(conn, "F redemption", UPDATE_F_SQL, params)
+        affected_splitters = _run_upsert_collect_pks(conn, "G split   ", UPDATE_G_SPLIT_SQL, params)
+        affected_mergers   = _run_upsert_collect_pks(conn, "G merge   ", UPDATE_G_MERGE_SQL, params)
 
         derived_a_wallet_set = (
             None if full_rebuild
-            else list(set(affected_wallets) | set(affected_redeemers))
+            else list(
+                set(affected_wallets)
+                | set(affected_redeemers)
+                | set(affected_splitters)
+                | set(affected_mergers)
+            )
         )
         derived_a_params = {
             "wallets": derived_a_wallet_set,
@@ -756,6 +847,61 @@ def run_once(full_rebuild: bool = False):
         conn.close()
 
 
+def run_backfill_g():
+    """One-shot: aggregate ALL historical `position_splits` + `position_merges`
+    into the corresponding wallet columns, then recompute `net_pnl_usd` for
+    every wallet.
+
+    Use this EXACTLY ONCE, right after deploying the G stage. Before this is
+    run, `total_split_usd` / `total_merge_usd` are stuck at 0 for every
+    historical wallet because the incremental rollup never saw those events.
+    After this runs the watermark is unchanged — subsequent incremental passes
+    pick up NEW split/merge events through the usual (from, to] window.
+
+    Not idempotent in the naïve sense: re-running would double-count.
+    Guarded by the split/merge counts — if either column is already nonzero
+    for ANY wallet, we assume the backfill already ran and abort.
+    """
+    conn = get_conn()
+    try:
+        ensure_tables(conn)
+        synced, current = _read_blocks(conn)
+        if current <= 0:
+            print("No unified_last_block; skipping.", flush=True)
+            return
+        with conn.cursor() as cur:
+            cur.execute("""SELECT COALESCE(SUM(split_count), 0),
+                                  COALESCE(SUM(merge_count), 0)
+                           FROM wallet_volume_rollup""")
+            sc, mc = cur.fetchone()
+        if sc > 0 or mc > 0:
+            print(f"G backfill already ran (split_count={sc:,}, "
+                  f"merge_count={mc:,}); refusing to double-count.",
+                  flush=True)
+            return
+        print(f"G backfill: aggregating splits/merges over (0, {synced:,}] "
+              f"into wallet_volume_rollup.", flush=True)
+        with conn.cursor() as cur:
+            cur.execute("SET LOCAL statement_timeout = 0")
+            cur.execute("SET LOCAL work_mem = '2GB'")
+        params = {"from": 0, "to": synced}
+        t0 = time.time()
+        _run_sql(conn, "G split   ", UPDATE_G_SPLIT_SQL, params)
+        _run_sql(conn, "G merge   ", UPDATE_G_MERGE_SQL, params)
+        # Recompute net_pnl_usd + markets_touched/active_months for every
+        # wallet (NULL means "all rows").
+        _run_sql(conn, "A derived ", RECOMPUTE_A_DERIVED_SQL, {"wallets": None})
+        conn.commit()
+        print(f"G backfill done in {time.time() - t0:.1f}s. Watermark unchanged "
+              f"at {synced:,}; resume the incremental daemon normally.",
+              flush=True)
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
 def run_loop(interval_sec: int):
     """Daemon: run_once() every interval_sec seconds, forever."""
     print(f"Rollup daemon starting (interval={interval_sec}s)", flush=True)
@@ -775,12 +921,19 @@ def main():
                    help="Run as daemon; optional interval in seconds (default 60).")
     p.add_argument("--rebuild", action="store_true",
                    help="Reset watermark to 0 and do a full rebuild.")
+    p.add_argument("--backfill-g", action="store_true",
+                   help="One-shot: aggregate ALL historical position_splits / "
+                        "position_merges into wallet_volume_rollup and recompute "
+                        "net_pnl_usd. Run EXACTLY ONCE after first deploying the "
+                        "G stage; subsequent runs self-abort if counts are nonzero.")
     args = p.parse_args()
 
-    if args.rebuild and args.loop is not None:
-        p.error("--rebuild and --loop cannot be combined")
+    if sum([args.rebuild, args.loop is not None, args.backfill_g]) > 1:
+        p.error("--rebuild / --loop / --backfill-g are mutually exclusive")
 
-    if args.loop is not None:
+    if args.backfill_g:
+        run_backfill_g()
+    elif args.loop is not None:
         run_loop(args.loop)
     else:
         run_once(full_rebuild=args.rebuild)

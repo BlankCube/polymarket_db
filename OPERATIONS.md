@@ -237,6 +237,57 @@ Safe to run alongside indexer + rollup; only touches `markets` upserts.
 
 ---
 
+## Instance resize checklist
+
+The host (currently **r6i.2xlarge**, 8 vCPU / 64 GB RAM) is sized for
+catch-up indexing — Polymarket-active block ranges drive nvme to ~90%
+utilization, while CPU sits at ~50% idle. Once we're caught up to chain
+tip and only doing live-tail (~30 blk/min on Polygon), the instance is
+massively oversized.
+
+**Don't downsize during catch-up.** EBS baseline IOPS / throughput is
+proportional to instance size — going smaller cuts disk-bandwidth
+exactly when we need it most.
+
+**After catch-up + steady live-tail for 1-2 weeks**, evaluate by
+measuring real working set:
+
+```bash
+# CPU + iowait
+mpstat 1 60 | tail -2 | head -1
+# Steady-state memory + cache
+free -h
+# Disk pressure
+iostat -x 1 30 | grep nvme0n1 | tail -10
+```
+
+If sustained: <20% user CPU, <30% iowait, <40 GB working set, then
+downsize is safe. Recommended steps (us-west-2 on-demand, approx):
+
+| target          | vCPU/RAM   | $/mo  | save | required tweaks |
+|-----------------|------------|-------|------|----------------|
+| r6i.2xlarge     | 8 / 64 GB  | $363  | —    | (current)       |
+| **r6i.xlarge**  | 4 / 32 GB  | $182  | 50%  | drop `shared_buffers` 24→12 GB; restart PG |
+| m6i.xlarge      | 4 / 16 GB  | $138  | 62%  | drop `shared_buffers` 24→6 GB; raises miss rate, only OK if total DB hot set < 16 GB |
+
+**Procedure for r6i.2xlarge → r6i.xlarge (the safe step):**
+
+1. `kill -TERM` indexer + rollup; let webapp drain.
+2. Stop the EC2 instance.
+3. AWS console: change instance type → `r6i.xlarge`.
+4. Start instance.
+5. Edit `postgresql.conf`: `shared_buffers = 12GB`, `effective_cache_size = 24GB`.
+6. `sudo systemctl restart postgresql`.
+7. Restart daemons per the "Cold start" section above.
+8. Watch nvme + load for 30 min. If iowait stays <50% and rollup keeps
+   `lag = 0`, we're fine. If not, resize back up.
+
+Reverse path (xlarge → 2xlarge) is the same flow without the
+`postgresql.conf` edit; bigger `shared_buffers` is set on next planned
+restart.
+
+---
+
 ## Deferred work — read before making changes
 
 `feedback/deferred_improvements.md` is the honest backlog. Each entry

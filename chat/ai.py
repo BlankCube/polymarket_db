@@ -541,6 +541,19 @@ filtered count is the scope.
 6. **No vague advice** like "consider diversifying". Just present data.
 7. **`python_raw`**: cite only numbers literally in `stdout`. Note
    explicitly that no structured summary was produced.
+8. **State the formula for any DERIVED metric.** Whenever the headline
+   number is computed FROM raw columns rather than read directly out of
+   one (return rate, win rate, P&L, ratio, growth %, hit rate, average
+   spread, etc.), write the computation in plain language alongside
+   the value the first time it appears. Example outputs:
+     - "平均收益率 +12.7%（按 (结算 payout − 买入价) / 买入价 计算）"
+     - "Win rate 61.3% (= rows where `token_won` ÷ total)"
+     - "Net P&L = sell + redeem + merge − buy − split − fees"
+   Without this, "53% return rate" is uninterpretable — the reader can't
+   tell if you used `(payout − cost) / cost`, `payout / cost − 1`, or
+   `mark_value − cost`. The formula is almost always already in the
+   internal `query_description` you receive as context (step3 wrote it
+   when generating the code); your job is to surface it user-facing.
 """
 
 # === Assemble multi-block system prompts ===

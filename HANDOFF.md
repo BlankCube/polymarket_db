@@ -1,7 +1,87 @@
 # Session Handoff
 
 Paste-in prompt for a new Claude session picking up this project. Last
-updated **2026-04-21**.
+updated **2026-05-07**.
+
+---
+
+## Repo layout
+
+```
+/home/ubuntu/polymarket-db/
+├── HANDOFF.md          # this file — start here
+├── PRODUCT.md          # what the product is + Improvement Methodology
+├── OPERATIONS.md       # runbook: daemons, restart, log rotation, EBS resize
+├── _pm_common.py       # tiny shared helper (load_dotenv) used by both
+│                       #   chat/config.py and database/config.py — they
+│                       #   prepend project root to sys.path to share it
+├── .env                # PG creds, ANTHROPIC_API_KEY, RPC URL (mode 600)
+├── .gitignore          # ignores venv/, *.pyc, *.log, certs/, .env
+├── certs/              # self-signed SSL for the :8080 webapp (replace
+│                       #   with Let's Encrypt before external users)
+│
+├── database/           # everything that writes to PG (no AI here)
+│   ├── ROLLUPS.md      # the 5 incremental rollup tables — design + SQL
+│   ├── schema.sql      # raw event tables + indexes
+│   ├── schema_roles.sql# polymarket / polymarket_ro role grants
+│   ├── config.py       # env-driven config (RPC URL, contract addrs, topics)
+│   ├── db.py           # get_conn / ensure_conn / get_state — all PG IO
+│   ├── indexer.py      # per-event-type log decoders (process_*_logs)
+│   ├── unified_indexer.py  # the live indexer daemon (8 event types,
+│   │                       #   --workers N parallel, --stop-at, --loop)
+│   ├── rollup.py       # rollup daemon (5 stages D-E-C-A-B + F + G,
+│   │                   #   --loop / --rebuild / --backfill-g)
+│   ├── verify_pnl.py   # regression suite for net_pnl_usd
+│   ├── sync_markets.py # Gamma API → markets table
+│   ├── sync_categories.py  # Gamma API → markets.category
+│   ├── query.py        # ad-hoc query helpers (used by run.py)
+│   ├── run.py          # CLI: "run.py sync-markets", "run.py index", etc.
+│   └── backfill_splits_merges.py  # RETIRED 2026-04-22, hard-guarded.
+│                       #   See its docstring; do not execute.
+│
+├── chat/               # FastAPI webapp + AI chat pipeline (no PG writes)
+│   ├── app.py          # FastAPI: /api/login /api/chat /api/sessions/<id>
+│   │                   #   /api/execution/<id>/csv  /api/end-session etc.
+│   ├── ai.py           # ALL prompts live here (DOMAIN_KNOWLEDGE,
+│   │                   #   DB_SCHEMA, _UNDERSTAND/_GENERATE/_INTERPRET
+│   │                   #   bodies) + ai_stream / ai_complete + tool loop
+│   ├── process.py      # 5-step pipeline: classify → step1 → step3 retry
+│   │                   #   → execute → step5; emits SSE events
+│   ├── result_format.py# normalize SQL/Python output for step5 + CSV
+│   ├── sql_safety.py   # validate_and_limit (read-only enforcement,
+│   │                   #   comment stripping, LIMIT injection)
+│   ├── python_runner.py# AST-sandboxed Python execution
+│   ├── sessions_repo.py# user_sessions / session_executions persistence
+│   ├── auth.py         # bcrypt + JWT
+│   ├── config.py       # env-driven config (DB creds, AI model names)
+│   ├── db_pool.py      # asyncpg pool (read-only role for AI queries)
+│   ├── example_questions.py  # the curated library shown to new users
+│   ├── backfill_execution_stamps.py  # one-shot: stamps execution_id
+│   │                   #   onto historical assistant messages
+│   └── static/         # webapp HTML/JS/CSS served by FastAPI mount
+│
+├── feedback/           # everything human-feedback-driven (logs + queue)
+│   ├── deferred_improvements.md  # the backlog — grep before proposing
+│   └── logs/
+│       ├── chat.jsonl          # live session log (truncate in place)
+│       ├── chat.archive.jsonl  # cold archive of analyzed sessions
+│       └── errors.log          # uvicorn + worker tracebacks
+│
+└── .claude/            # Claude Code agent configuration
+    ├── agents/
+    │   └── improvement-analyst.md  # subagent for log review
+    └── settings.local.json
+```
+
+Files NOT in the tree but referenced in docs / important to know:
+- `~/.claude/projects/-home-ubuntu-polymarket-db/memory/MEMORY.md`
+  — agent memory across sessions. Holds the schema-fossil rule, the
+  log-rotation rule, and pointers to deferred items.
+- `/var/lib/postgresql/16/main/` — PG data dir, currently ~1.4 TB.
+  EBS resize procedure in OPERATIONS.md.
+- `webapp.log` / `indexer_unified.log` / `rollup.log` at repo root —
+  daemon stdout/stderr. Active. Truncate in place (`> file`), never
+  `mv`, see `MEMORY.md` log-rotation rule.
 
 ---
 

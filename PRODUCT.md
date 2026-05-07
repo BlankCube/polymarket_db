@@ -34,7 +34,7 @@ The data layer. Contains all Polymarket on-chain trading data.
 
 **Key files:** config.py, db.py, schema.sql, indexer.py, unified_indexer.py, sync_markets.py, sync_categories.py
 
-**Key tables:** markets, order_fills (170M+ rows), token_market_map, resolutions, redemptions, backtest_trades (materialized view)
+**Key tables:** markets, order_fills (170M+ rows), token_market_map, resolutions, redemptions, position_splits, position_merges, plus the wallet/market rollups (see `database/ROLLUPS.md`)
 
 **The AI accesses this via:** SQL queries (through asyncpg pool, read-only) and Python code (through query_db() function in subprocess)
 

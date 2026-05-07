@@ -105,8 +105,7 @@ DB_SCHEMA = """## Database schema — tables, scaling, and which rollup to use
     - Per-market deep dive / any analysis on post-2023-11 markets → join to `market_volume_rollup` for accurate on-chain volume.
     - Platform-wide / historical / "is there a market about X" → `markets` alone (by `question` ILIKE) covers the full 757K set including old/off-contract markets we can't analyze on-chain.
     - Suspicious zero in a grouping you'd expect active (e.g. many markets matching `question ILIKE '%Bitcoin%'` but all rollup volume = 0) → coverage hole, use `markets.volume` for the aggregate or narrow the scope to on-chain-indexed markets.
-- **`order_fills`** (~200M rows, hot table). Every trade. Indexes: `maker`, `taker`, `condition_id`, `price`, `block_timestamp`, `block_number`, composites `(condition_id, price)`, `(condition_id, block_timestamp)`, `(maker, condition_id)`, `(price, block_timestamp)`. Scaling: **`usdc_amount`, `token_amount`, `fee` are raw 6-decimal — divide by 1e6 for USD.** Every query MUST filter on an indexed column; an unfiltered scan hits the 300s statement timeout.
-- **`backtest_trades`** (~600K rows, materialized view). Pre-joined post-expiry trades with `trade_time`, `price_bucket`, `usdc`, `tokens`, `question`, `end_date`, `resolved_at`, `token_won`, `hold_hours`. **Use for any strategy analysis of trades after the event deadline** — 300× smaller than raw `order_fills`.
+- **`order_fills`** (~200M rows, hot table). Every trade. Indexes: `maker`, `taker`, `condition_id`, `price`, `block_timestamp`, `block_number`, composites `(condition_id, price)`, `(condition_id, block_timestamp)`, `(maker, condition_id)`, `(price, block_timestamp)`. Scaling: **`usdc_amount`, `token_amount`, `fee` are raw 6-decimal — divide by 1e6 for USD.** Every query MUST filter on an indexed column; an unfiltered scan hits the 300s statement timeout. Strategy backtests (post-expiry windows, hold-time buckets, etc.) are computed by joining `order_fills` to `markets` (for `end_date` / `resolved_at` / `resolution_payout`) and `token_market_map` (for `outcome_index`); use the `(condition_id, block_timestamp)` index to keep the scan narrow. The strategy's win/loss flag comes from `m.resolution_payout` — e.g. for outcome 0 the YES side won iff `(m.resolution_payout->>0)::int = 1`.
 - **`redemptions`** (~16M rows). Columns: `redeemer` (TEXT — the wallet claiming the payout; NOT called `wallet`), `condition_id`, `payout` (raw 6-decimal, divide by 1e6), `block_timestamp`, `index_sets`. When joining with wallet-centric rollups, alias carefully: `redemptions.redeemer = wallet_volume_rollup.wallet`.
 - **`order_matches`** columns: `maker_order_maker`, `taker_order_maker`, `usdc_amount` / `token_amount` (raw 6-decimal, divide by 1e6), `condition_id`, `block_timestamp`.
 - **`token_market_map`** (token_id → condition_id, outcome_index 0/1, outcome_label), **`resolutions`**: supporting tables.
@@ -126,7 +125,7 @@ DB_SCHEMA = """## Database schema — tables, scaling, and which rollup to use
 - Wallet × market breakdown → `wallet_market_pairs`.
 - Monthly or longer time windows → `wallet_monthly_stats` / `market_monthly_stats`.
 - Finer than monthly (last 24h, specific day) or individual trade details → `order_fills` (narrow WHERE first).
-- Post-expiry strategy analysis → `backtest_trades`.
+- Strategy backtests (post-expiry, hold-time, price-band) → `order_fills` JOIN `markets` JOIN `token_market_map`, narrowed by an indexed predicate first.
 
 Prefer rollups whenever the question maps onto one — they are 300-2000× faster than the equivalent aggregate on `order_fills`.
 """
@@ -209,7 +208,7 @@ Cite it in the user's language (English "Estimated: ~5s" / Chinese "预计
 ~5 秒"). Cost buckets:
 
 - **Small (~1-5s)**: one specific market/address, or anything on `markets`
-  / `backtest_trades` / any rollup table.
+  or any rollup table.
 - **Medium (~5-30s)**: thousands of markets, narrow time window (days /
   weeks), or narrow price band WITH a time/market co-filter.
 - **Large (~30-120s)**: loosely filtered returning millions of rows.
@@ -364,7 +363,6 @@ aggregate on `order_fills`. Concretely:
 - "most-traded markets", "market X's duration / VWAP / participants" → `market_volume_rollup`
 - "wallet × market" cross → `wallet_market_pairs`
 - "top wallets/markets in month Y" → `wallet_monthly_stats` / `market_monthly_stats`
-- post-expiry strategy backtests → `backtest_trades`
 
 **`GROUP BY maker`/`taker` on `order_fills`** is ONLY safe when BOTH:
 - time window ≤ 60 days, AND

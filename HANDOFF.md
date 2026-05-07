@@ -89,6 +89,24 @@ wallets read as fake +$4 B. Fix in three steps, all now done:
    lifted. Caveat kept: realised PnL only (no M2M on open positions,
    no gas).
 
+**`backtest_trades` matview retired — 2026-05-07.** It was a project-
+launch fossil: an over-specialised materialised view (`order_fills`
+JOIN `markets` JOIN `token_market_map` filtered to BUY trades with
+price ∈ [0.895, 1.005] in markets resolved AFTER the deadline) created
+for the original "post-expiry high-price arbitrage" research question
+and never generalised. Two of the four canonical example questions
+were routed at it, and AI generation kept hallucinating column names
+(`price` / `trade_price`) and treating `token_won` as integer instead
+of BOOLEAN — every retry exhausted on those two questions. Fix:
+dropped the matview (158 MB recovered), removed all references from
+`chat/ai.py`, `chat/example_questions.py`, `PRODUCT.md`, and
+`OPERATIONS.md`, and extended the `order_fills` schema doc in the
+prompt to spell out how to derive the win flag (`m.resolution_payout`)
+and which composite index to lean on (`(condition_id, block_timestamp)`).
+The two strategy questions in `example_questions.py` stay — they're
+now answered via raw `order_fills` JOIN, slower but consistent and
+not pinned to one hard-coded price band.
+
 ---
 
 ## Prompt + code design rules (learned the hard way)

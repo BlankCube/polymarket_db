@@ -8,7 +8,7 @@ Guidelines for adding entries
    researchers, not engineers. Avoid:
      - Internal field / table names (``condition_id``, ``first_trade``,
        ``markets_touched``, ``active_months``, ``total_volume_usd``,
-       ``backtest_trades``, ``wallet_market_pairs``...).
+       ``wallet_market_pairs``...).
      - Polymarket-internal concepts (``neg_risk`` multi-outcome,
        ``token_won``, ``resolution_payout``...).
      - Trading-platform lingo only SQL people know (``vwap``, ``OHLC``,
@@ -24,7 +24,7 @@ Guidelines for adding entries
    time series. "It depends" is not an example.
 
 4. **Feasible on our actual data.** We index:
-     - Trades (order_fills, rollups, backtest_trades).
+     - Trades (order_fills + rollups).
      - Resolutions + redemptions.
      - Market metadata (via Gamma API sync).
    We do NOT index current on-chain token balances. Questions like

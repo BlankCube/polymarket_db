@@ -210,7 +210,6 @@ cat /home/ubuntu/polymarket-db/feedback/logs/chat.jsonl >> \
 - `order_matches` ~50 M rows
 - `redemptions` ~16 M rows
 - `position_splits` ~136 M rows / `position_merges` ~23 M rows (kept current by `unified_indexer`)
-- `backtest_trades` materialized view, ~600 K rows
 - 5 rollups: `wallet_volume_rollup` (1.8 M) / `market_volume_rollup` (~223 K) / `wallet_market_pairs` (~34 M) / `wallet_monthly_stats` (~5 M) / `market_monthly_stats` (~214 K)
 - App tables: `users`, `user_sessions`, `session_executions`, `indexer_state`
 

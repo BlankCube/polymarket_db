@@ -203,15 +203,30 @@ cat /home/ubuntu/polymarket-db/feedback/logs/chat.jsonl >> \
 - Read-only role: `polymarket_ro` (used by AI-generated SQL via `db_pool.py`)
 - Creds: `/home/ubuntu/polymarket-db/.env` (mode 600; never commit)
 
-### Tables, live sizes
+### Tables (sizes are moving targets during catch-up; query live)
 
-- `markets` ~757 K rows (Gamma metadata; full platform coverage)
-- `order_fills` ~200 M rows (CTF + Neg-Risk fills)
-- `order_matches` ~50 M rows
-- `redemptions` ~16 M rows
-- `position_splits` ~136 M rows / `position_merges` ~23 M rows (kept current by `unified_indexer`)
-- 5 rollups: `wallet_volume_rollup` (1.8 M) / `market_volume_rollup` (~223 K) / `wallet_market_pairs` (~34 M) / `wallet_monthly_stats` (~5 M) / `market_monthly_stats` (~214 K)
-- App tables: `users`, `user_sessions`, `session_executions`, `indexer_state`
+```sql
+SELECT relname, pg_size_pretty(pg_total_relation_size(oid)),
+       reltuples::bigint AS approx_rows
+FROM pg_class WHERE relkind IN ('r','m')
+  AND relnamespace = 'public'::regnamespace
+ORDER BY pg_total_relation_size(oid) DESC;
+```
+
+Categories:
+- **Event tables** (raw on-chain events; grow with the indexer):
+  `order_fills`, `order_matches`, `redemptions`, `resolutions`,
+  `position_splits`, `position_merges`.
+- **Metadata**: `markets` (Gamma-synced, ~757 K), `token_market_map`
+  (token_id → condition_id mapping), `resolutions` (oracle answers).
+- **5 rollups** (incrementally maintained from `order_fills`):
+  `wallet_volume_rollup`, `market_volume_rollup`, `wallet_market_pairs`,
+  `wallet_monthly_stats`, `market_monthly_stats`.
+- **App tables**: `users`, `user_sessions`, `session_executions`,
+  `indexer_state`.
+
+Specific row-counts move during catch-up; cite the live query above
+rather than memorising stale numbers.
 
 ### Ad-hoc SQL
 

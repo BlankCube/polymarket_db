@@ -45,25 +45,38 @@ referring to previous turn's data) and `suggest_example_questions` (for
 
 ---
 
-## What's live as of 2026-04-22
+## What's live as of 2026-05-07
 
 Three daemons + PG; see `OPERATIONS.md` for details:
 
-1. `unified_indexer.py` — incremental on-chain scan of **8 event types**
-   (CTF/Neg-Risk fills+matches, resolution, redemption, split, merge),
-   advancing toward chain tip. Single watermark: `unified_last_block`.
-2. `rollup.py --loop 60` — 5-table aggregate daemon, ≤ 60 s behind indexer
-3. `uvicorn app:app` — webapp on `:8080` with SSL
+1. `unified_indexer.py --loop 30 --workers 4 --stop-at 86126998` —
+   incremental on-chain scan of **8 event types** (CTF/Neg-Risk
+   fills+matches, resolution, redemption, split, merge), running on
+   4 worker connections grouped by target table. Single watermark:
+   `unified_last_block`. Currently catching up; auto-halts at the
+   2026-04-28 V1→V2 cutover (block 86,126,998) until V2 decoders ship.
+2. `rollup.py --loop 60` — 5-table aggregate daemon, normally ≤ 60 s
+   behind indexer; in dense block regions a single rollup cycle can
+   take 5-10 min and the lag temporarily grows to 10-20K blocks before
+   catching back up.
+3. `uvicorn app:app` — webapp on `:8080` with SSL.
 
-**Splits/merges were folded into the unified indexer on 2026-04-22**
-after the one-shot `backfill_splits_merges.py` caught up past
-`unified_last_block`. The standalone backfill script + its
-`splits_merges_synced_block` watermark are retired; don't re-run it.
+**Retired scripts** (kept in tree as historical reference, all guarded
+to refuse execution): `database/backfill_splits_merges.py` (2026-04-22
+— splits/merges are now in the unified indexer).
 
-Current data cutoff: `max(order_fills.block_timestamp)` is **2026-01-12**
-(indexer is ~100 days behind chain tip; catching up at ~1 chain-day per
-wall-clock day). Step1's prompt has explicit cutoff-awareness logic — it
-warns users when their window extends past the indexed range.
+Current data cutoff: indexer at block **~84.5 M** (around 2025-12 mid),
+chain tip ~86.2 M. Polymarket migrated to V2 contracts on 2026-04-28
+at block 86,127,000; our indexer is paused ~10 K blocks before that
+boundary by `--stop-at` so we don't sail past with V1 decoders and
+silently drop V2 events. Step1's prompt has cutoff-awareness logic —
+it warns users when their window extends past the indexed range.
+
+**Disk** (1.9 TB total) burns at ~70 GB/day during catch-up; resize
+EBS via the `OPERATIONS.md → Instance resize checklist` if free space
+drops below the runway needed for ETA-to-cutover. The previous
+expansion (1.2 TB → 2.0 TB) on 2026-05-04 happened mid-catch-up, no
+data loss but PG took ~2 min of WAL replay to come back.
 
 ---
 

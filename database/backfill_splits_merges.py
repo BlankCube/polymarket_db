@@ -1,5 +1,24 @@
 #!/usr/bin/env python3
 """
+RETIRED 2026-04-22 — DO NOT RUN.
+
+This script's purpose was to backfill the gap between block 44M (CTF
+contract genesis) and ~80M (where the unified indexer first learned
+about split/merge). Once the backfill caught up to ``unified_last_block``,
+the two PositionSplit / PositionsMerge topic filters were folded into
+``unified_indexer.py::_process_batch`` and the standalone backfill
+became dead weight. The ``splits_merges_synced_block`` watermark row
+in ``indexer_state`` was deleted at the same time.
+
+The file is kept in the tree as historical reference for the bisecting
+adaptive batch-size logic on QuikNode 413 errors (which proved useful
+and might be worth porting to the unified indexer if its batches start
+hitting the same wall in dense block regions). DO NOT execute it
+against the live database.
+
+Original docstring follows for context.
+========================================================================
+
 One-shot backfill for PositionSplit / PositionsMerge events.
 
 Why this exists
@@ -43,8 +62,9 @@ throughput.
 """
 
 import argparse
-import time
+import os
 import sys
+import time
 
 from db import get_conn, ensure_conn, get_state
 from indexer import (
@@ -283,6 +303,16 @@ def run_backfill(batch_size: int, stop_at: int | None):
 
 
 def main():
+    sys.stderr.write(
+        "RETIRED 2026-04-22 — splits/merges are now indexed by unified_indexer.\n"
+        "This script would write to a watermark row that no longer exists and\n"
+        "duplicate work the live indexer is doing. Refusing to run.\n"
+        "Set the env var ALLOW_RETIRED_BACKFILL=1 if you really know why you're\n"
+        "running it.\n"
+    )
+    if os.environ.get("ALLOW_RETIRED_BACKFILL") != "1":
+        sys.exit(2)
+
     p = argparse.ArgumentParser()
     p.add_argument("--speed-test", action="store_true",
                    help="Scan a few batches without advancing the watermark "

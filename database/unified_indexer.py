@@ -242,7 +242,7 @@ def _backoff(attempt: int) -> int:
     return INDEXER_BACKOFF_SECONDS[idx]
 
 
-def run(workers: int = 1):
+def run(workers: int = 1, stop_at: int | None = None):
     """Catch-up scan from ``unified_last_block`` to chain tip.
 
     ``workers``:
@@ -251,9 +251,20 @@ def run(workers: int = 1):
              constraint), INSERTs fanned out across 4 worker connections
              grouped by target table. See ``_process_batch_parallel`` for
              the safety argument.
+
+    ``stop_at``:
+        If set, exit cleanly after committing the batch that contains this
+        block — even if the chain tip is further ahead. Used to halt at the
+        2026-04-28 V1→V2 cutover (block 86_126_998) until the V2 decoders
+        are in place; without it the indexer would advance the watermark
+        across cutover into V2-only territory and silently miss those
+        events. Combined with ``--loop``, the loop also exits once stop_at
+        is hit so the daemon doesn't busy-poll an idle target.
     """
     last_block = int(get_state(STATE_KEY, str(START_BLOCK)))
     current = get_current_block()
+    if stop_at is not None:
+        current = min(current, stop_at)
     from_block = last_block + 1
     conn = get_conn()
 
@@ -355,7 +366,7 @@ def run(workers: int = 1):
     print(f"\nDone. Totals: {totals}")
 
 
-def run_loop(interval_sec: int, workers: int = 1):
+def run_loop(interval_sec: int, workers: int = 1, stop_at: int | None = None):
     """Daemon: run() to catch-up, then poll the chain every ``interval_sec``
     seconds for new blocks. Mirrors ``rollup.py --loop``.
 
@@ -366,15 +377,29 @@ def run_loop(interval_sec: int, workers: int = 1):
     On Polygon at 2 s/block, ``interval_sec=30`` keeps us within ~15 new
     blocks behind the head on average (one batch's worth). Go shorter for
     tighter tailing; longer to reduce RPC usage.
+
+    If ``stop_at`` is set and the current watermark already meets/exceeds it,
+    the loop exits — pointless to busy-poll for a frozen target.
     """
     print(f"Unified indexer daemon starting (interval={interval_sec}s, "
-          f"workers={workers})", flush=True)
+          f"workers={workers}, stop_at={stop_at})", flush=True)
     while True:
         try:
-            run(workers=workers)
+            run(workers=workers, stop_at=stop_at)
         except Exception as e:
             print(f"⚠ run() crashed: {type(e).__name__}: {e}", flush=True)
             traceback.print_exc()
+        # Exit the loop once we've hit the stop-at boundary, so we don't
+        # spin every ``interval_sec`` against a target that won't move.
+        if stop_at is not None:
+            try:
+                synced = int(get_state(STATE_KEY, str(START_BLOCK)))
+                if synced >= stop_at:
+                    print(f"Reached stop_at={stop_at:,} (synced={synced:,}); "
+                          f"exiting daemon.", flush=True)
+                    return
+            except Exception:
+                pass
         time.sleep(interval_sec)
 
 
@@ -389,12 +414,16 @@ def main():
                         "fan INSERTs out across 4 worker connections grouped "
                         "by target table. See _process_batch_parallel for "
                         "the safety argument.")
+    p.add_argument("--stop-at", type=int, default=None,
+                   help="Exit cleanly after committing the batch containing "
+                        "this block. Used to halt at the V1→V2 cutover "
+                        "(block 86_126_998) until V2 decoders ship.")
     args = p.parse_args()
 
     if args.loop is not None:
-        run_loop(args.loop, workers=args.workers)
+        run_loop(args.loop, workers=args.workers, stop_at=args.stop_at)
     else:
-        run(workers=args.workers)
+        run(workers=args.workers, stop_at=args.stop_at)
 
 
 if __name__ == "__main__":

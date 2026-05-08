@@ -162,10 +162,37 @@ with subjective adjectives:
 - 范围：[markets / time]
 - 过滤：[price / side / wallet / ...]
 - 指标：[win rate / ROI / volume / count / ...]
+- 聚合方式：[only when reporting per-row rates/returns averaged across
+  rows of unequal size — say which weighting; see "Aggregation defaults"
+  below. Skip this bullet for raw counts / sums / single-market lookups.]
 - 预计 ~N 秒
 
 [ask for confirmation]
 ```
+
+## Aggregation defaults (rate / return / ratio metrics)
+
+When the question asks for an *average rate / return / yield / ratio*
+across many rows that have differing size (different USD amounts,
+different position sizes, etc.), the choice between **金额加权 / amount-
+weighted** vs **等权 / equal-weighted** changes the answer by orders of
+magnitude. Surface that choice in the plan — do NOT bury it in code:
+
+- Default to **amount-weighted (按金额加权)** for ROI / 收益率 / yield /
+  return / win-rate / spread / fee-ratio across heterogeneous trades.
+  The single-trade extremes that arise in prediction markets (a $1 buy
+  at price 0.01 that wins is a +9900% ROI on $1, which dominates an
+  equal-weighted average of millions of normal trades) are exactly the
+  case equal-weighting mishandles. State it: "聚合方式：按金额加权
+  (∑(每笔 USD × roi) / ∑USD)".
+- Use **equal-weighted** ONLY if the user's wording explicitly demands
+  it ("每笔交易等权", "按交易数量平均", "per-trade average"), or if the
+  rows are already homogeneous (per-wallet aggregates of similar scale).
+  When you choose this, also state it: "聚合方式：每笔等权".
+
+The user almost never types "金额加权" — don't expect them to. Surface
+the choice in plain language ("按金额加权" / "每笔等权") so they can
+override at the plan stage rather than after seeing the wrong number.
 
 The plan bullets ARE the complete answer to "what will we compute" —
 do NOT add a trailing sentence explaining *how* ("我会查 X 表的 Y 字段
@@ -353,6 +380,42 @@ for`) — it can't cite `row_count` yet; the interpreter does that later.
    blocks, or one `<python>` doing two `query_db(...)` calls. Don't
    `UNION ALL` an aggregate row with detail rows (NULL padding will
    break the interpreter).
+6. **Aggregating per-row rates / returns / ratios → amount-weighted by
+   default.** When the metric is computed PER ROW (ROI, win rate,
+   spread, fee ratio, return, yield, P&L percent, etc.) and you're
+   averaging it across rows of unequal economic size, write the
+   computation as `SUM(metric × weight) / SUM(weight)`, NOT `AVG(metric)`.
+   The natural weight is usually `usdc_amount` (per fill), `total_volume_usd`
+   (per wallet/market rollup), or whatever dollar quantity the row
+   represents.
+
+   Why: prediction-market data is fat-tailed. A simple `AVG(roi)` is
+   dominated by a handful of $1 buys at price 0.01 that won — those
+   each carry a +9900% ROI while a $50K buy at 0.55 that won is just
+   +82%. Equal-weighting them gives nonsense headline numbers like
+   +300%. Amount-weighting reflects what an actual capital deployer
+   would have earned.
+
+   SQL pattern:
+       SELECT bucket,
+              SUM(usd_amount * roi) / NULLIF(SUM(usd_amount), 0) AS weighted_roi,
+              SUM(roi)             / COUNT(*)                    AS equal_weighted_roi,
+              COUNT(*)             AS trades,
+              SUM(usd_amount)      AS total_usd
+       FROM ...
+       GROUP BY bucket;
+
+   Python (pandas) pattern:
+       def wavg(g, metric, weight):
+           w = g[weight].sum()
+           return (g[metric] * g[weight]).sum() / w if w else 0
+       df.groupby('bucket').apply(lambda g: wavg(g, 'roi', 'usd_amount'))
+
+   Use `AVG(metric)` (equal-weighted) ONLY when (a) the rows are already
+   homogeneous (per-wallet aggregates), or (b) the user's wording
+   explicitly demanded equal weighting. The description bullets MUST
+   say which one was used so step5 can surface it ("聚合方式：按
+   usdc_amount 加权" / "聚合方式：每笔等权").
 
 ## Stay inside the timeout budget (order_fills = ~200M rows)
 

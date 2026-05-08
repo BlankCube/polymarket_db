@@ -225,7 +225,7 @@ question, do ALL of:
 |---|---|
 | Trading heat / "最火热" / "who trades X most" | last 3 months |
 | Specific historical event (election / 世界杯决赛) | match that event's period |
-| Strategy backtest ("does buying at 0.99 pay?") | offer a choice: last 6 months OR all time |
+| Strategy backtest ("does buying at 0.99 pay?", "post-expiry hold-time return", "all trades held to settlement", etc.) | propose a concrete bounded default (e.g. "近 12 个月已结算市场" / "2024 年至今") AND offer "all time" as the other option in your confirmation question. NEVER write the plan with `范围：所有已结算市场` as the silent default — that scopes a 3-table JOIN over 200M+ order_fills rows and reliably hits the 300s timeout in step3. |
 | Market existence / metadata | no time filter (query `markets`) |
 | Single-market deep dive (user gave a condition_id) | no time filter |
 
@@ -376,6 +376,15 @@ for`) — it can't cite `row_count` yet; the interpreter does that later.
      handles formatting; manual `strftime` + string interpolation is
      fragile.
    Use `print()` for output.
+
+   **Sandbox-banned builtins (will error on AST walk)**: `eval`, `exec`,
+   `compile`, `open`, `__import__`, `getattr`, `setattr`, `delattr`,
+   `globals`, `locals`, `vars`, `input`, `breakpoint`, `help`. To parse
+   a JSON column from PG, use `json.loads(s)` — the column already
+   arrives as a Python `list`/`dict` from psycopg2's JSONB adapter most
+   of the time, so check the type first; never `eval(s)` a JSONB cell.
+   Same for stringified numerics: use `int(s)` / `float(s)` /
+   `Decimal(s)`, not `eval`.
 5. **Need aggregate AND examples?** Two separate queries — two `<sql>`
    blocks, or one `<python>` doing two `query_db(...)` calls. Don't
    `UNION ALL` an aggregate row with detail rows (NULL padding will
@@ -421,6 +430,29 @@ for`) — it can't cite `row_count` yet; the interpreter does that later.
 
 Every `order_fills` query must hit an index. An unfiltered or loosely
 filtered scan hits the 300-second timeout.
+
+**Filtering markets by `m.resolved_at` does NOT narrow `order_fills`.**
+A common timeout pattern is
+
+    SELECT ... FROM order_fills f
+    JOIN markets m ON f.condition_id = m.condition_id
+    WHERE m.resolved_at >= '2024-01-01' AND f.block_timestamp < m.resolved_at
+
+PG hash-joins markets onto a sequential scan of order_fills (no
+index on the join key alone is selective enough), then filters at the
+top — that's a 200M-row seq-scan and times out. ALWAYS add a redundant
+**direct filter on `f.block_timestamp`** so PG can use `idx_fills_block_ts`:
+
+    WHERE m.resolved_at >= '2024-01-01'
+      AND f.block_timestamp >= '2023-11-16'   -- redundant but indexed
+      AND f.block_timestamp < m.resolved_at
+
+Pick the redundant lower bound conservatively (CTF contract genesis is
+2023-11-16; for "last 12 months of resolved markets" use ~14 months
+back to allow trades that happened well before resolution). Same trick
+applies to `condition_id IN (...)` patterns: even with a narrow markets
+filter, also add `f.condition_id IN (...)` directly so the order_fills
+side uses `idx_fills_condition_id`.
 
 **When the user's question maps to a rollup, go there first** (see the
 DB_SCHEMA block). Rollups are 300-2000× faster than the equivalent

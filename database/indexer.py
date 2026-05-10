@@ -322,6 +322,201 @@ def process_orders_matched_logs(logs, exchange_name, conn, cache: BatchCache):
     return len(rows)
 
 
+# ============ V2 decoders (post-2026-04-28 cutover, block 86,126,998) ============
+#
+# V2 OrderFilled and V2 OrdersMatched have a different on-wire layout than V1.
+# Instead of inferring (token_id, side) from the (makerAssetId, takerAssetId)
+# pair where one element is 0-for-collateral, V2 ships `side` (uint8 enum) and
+# `tokenId` (uint256) as direct event fields. V2 also adds two trailing
+# bytes32 fields — `builder` (origin tag) and `metadata` (free-form
+# attribution hash) — which we persist into the new `order_fills.builder` and
+# `order_fills.metadata` columns added by 2026_05_08_v2_indexer.sql.
+#
+# To keep the existing schema and downstream queries working unchanged, the
+# V2 decoder synthesises a V1-shape (maker_asset_id, taker_asset_id) pair
+# from the V2 (side, tokenId): one slot is "0" (collateral leg), the other
+# carries tokenId, picked by side. Result: a V2 row looks structurally
+# identical to a V1 row in every column rollups / AI prompts read, plus the
+# extra V2-only fields. `exchange_version=2` lets analytics scope explicitly
+# when needed.
+#
+# Storage scaling note: V2 amounts arrive in pUSD (PolymarketUSD wrapper)
+# but pUSD is a 1:1 6-decimal wrapper around USDC, so /1e6 in the existing
+# downstream queries is correct as-is. Verified on-chain 2026-05-08.
+
+# V2 Side enum (Solidity ordering: 0 = BUY, 1 = SELL).
+V2_SIDE_BUY = 0
+V2_SIDE_SELL = 1
+
+
+def _v2_synthesize_legacy_asset_pair(side: int, token_id: int) -> tuple[int, int]:
+    """Map V2 (side, tokenId) → V1 (makerAssetId, takerAssetId) shape.
+
+    V1 convention: the "collateral leg" of the trade is encoded as 0 in one
+    of the two asset_id slots; the other slot carries the CTF token id. The
+    side is recovered downstream by checking which slot is 0:
+      - maker BUY  → maker pays USDC (slot 0 = 0), receives tokens (slot 1 = tokenId)
+      - maker SELL → maker pays tokens (slot 0 = tokenId), receives USDC (slot 1 = 0)
+    """
+    if side == V2_SIDE_BUY:
+        return 0, token_id
+    if side == V2_SIDE_SELL:
+        return token_id, 0
+    # Unknown side enum (shouldn't happen — Solidity constrains uint8 + 2-value
+    # enum at the source). Fall through to a safe pair so the row still inserts;
+    # derive_trade_fields will tag side="UNKNOWN" downstream.
+    return token_id, token_id
+
+
+def process_order_filled_v2_logs(logs, exchange_name, conn, cache: BatchCache):
+    """Parse V2 OrderFilled logs and insert into order_fills.
+
+    V2 ABI:
+      event OrderFilled(
+        bytes32 indexed orderHash,
+        address indexed maker,
+        address indexed taker,
+        uint8   side,                  // 0=BUY, 1=SELL (maker's perspective)
+        uint256 tokenId,               // CTF outcome token id
+        uint256 makerAmountFilled,
+        uint256 takerAmountFilled,
+        uint256 fee,
+        bytes32 builder,
+        bytes32 metadata
+      )
+
+    Topics:    [0]=signature, [1]=orderHash, [2]=maker, [3]=taker
+    Data slots: 0=side, 1=tokenId, 2=makerAmt, 3=takerAmt, 4=fee, 5=builder, 6=metadata
+    Total data: 0xe0 (224 bytes).
+    """
+    if not logs:
+        return 0
+
+    rows = []
+    for log in logs:
+        bn = log["blockNumber"]
+        ts = log_timestamp(log)
+
+        tx_hash = log["transactionHash"]
+        tx_hash = tx_hash.hex() if isinstance(tx_hash, bytes) else tx_hash
+        log_idx = log["logIndex"]
+
+        order_hash = decode_indexed_bytes32(log["topics"][1])
+        maker = decode_indexed_address(log["topics"][2])
+        taker = decode_indexed_address(log["topics"][3])
+
+        data = log["data"] if isinstance(log["data"], bytes) else bytes(log["data"])
+        side_uint = decode_uint256(data, 0)
+        token_id_uint = decode_uint256(data, 1)
+        maker_amount_filled = decode_uint256(data, 2)
+        taker_amount_filled = decode_uint256(data, 3)
+        fee = decode_uint256(data, 4)
+        # bytes32 reads as 32-byte raw slot — preserve as 0x-prefixed hex.
+        builder = "0x" + data[5 * 32:6 * 32].hex()
+        metadata = "0x" + data[6 * 32:7 * 32].hex()
+
+        # Synthesise V1-shape asset pair so downstream queries keep working.
+        maker_asset_id, taker_asset_id = _v2_synthesize_legacy_asset_pair(side_uint, token_id_uint)
+        token_id, condition_id, side, price, usdc_amount, token_amount = derive_trade_fields(
+            maker_asset_id, taker_asset_id, maker_amount_filled, taker_amount_filled, cache,
+        )
+
+        rows.append((
+            tx_hash, log_idx, bn, ts, exchange_name,
+            order_hash if order_hash.startswith("0x") else "0x" + order_hash,
+            maker.lower(), taker.lower(),
+            str(maker_asset_id), str(taker_asset_id),
+            maker_amount_filled, taker_amount_filled, fee,
+            token_id, condition_id, side, price, usdc_amount, token_amount,
+            builder, metadata, 2,
+        ))
+
+    with conn.cursor() as cur:
+        psycopg2.extras.execute_values(cur, """
+            INSERT INTO order_fills
+            (tx_hash, log_index, block_number, block_timestamp, exchange,
+             order_hash, maker, taker, maker_asset_id, taker_asset_id,
+             maker_amount_filled, taker_amount_filled, fee,
+             token_id, condition_id, side, price, usdc_amount, token_amount,
+             builder, metadata, exchange_version)
+            VALUES %s
+            ON CONFLICT (tx_hash, log_index) DO NOTHING
+        """, rows, page_size=1000)
+    return len(rows)
+
+
+def process_orders_matched_v2_logs(logs, exchange_name, conn, cache: BatchCache):
+    """Parse V2 OrdersMatched logs and insert into order_matches.
+
+    V2 ABI:
+      event OrdersMatched(
+        bytes32 indexed takerOrderHash,
+        address indexed takerOrderMaker,
+        uint8   side,
+        uint256 tokenId,
+        uint256 makerAmountFilled,
+        uint256 takerAmountFilled
+      )
+
+    Topics:    [0]=signature, [1]=takerOrderHash, [2]=takerOrderMaker
+    Data slots: 0=side, 1=tokenId, 2=makerAmt, 3=takerAmt
+    Total data: 0x80 (128 bytes).
+
+    Note: V2 dropped `maker_order_maker` (the matched maker side) from the
+    event — that information is now redundant because per-fill OrderFilled
+    events already carry each maker. The row inserts with NULL there.
+    """
+    if not logs:
+        return 0
+
+    rows = []
+    for log in logs:
+        bn = log["blockNumber"]
+        ts = log_timestamp(log)
+
+        tx_hash = log["transactionHash"]
+        tx_hash = tx_hash.hex() if isinstance(tx_hash, bytes) else tx_hash
+        log_idx = log["logIndex"]
+
+        taker_order_hash = decode_indexed_bytes32(log["topics"][1])
+        taker_order_maker = decode_indexed_address(log["topics"][2])
+
+        data = log["data"] if isinstance(log["data"], bytes) else bytes(log["data"])
+        side_uint = decode_uint256(data, 0)
+        token_id_uint = decode_uint256(data, 1)
+        maker_amount_filled = decode_uint256(data, 2)
+        taker_amount_filled = decode_uint256(data, 3)
+
+        maker_asset_id, taker_asset_id = _v2_synthesize_legacy_asset_pair(side_uint, token_id_uint)
+        token_id, condition_id, side_str, price, usdc_amount, token_amount = derive_trade_fields(
+            maker_asset_id, taker_asset_id, maker_amount_filled, taker_amount_filled, cache,
+        )
+
+        rows.append((
+            tx_hash, log_idx, bn, ts, exchange_name,
+            taker_order_hash if taker_order_hash.startswith("0x") else "0x" + taker_order_hash,
+            taker_order_maker.lower(),
+            str(maker_asset_id), str(taker_asset_id),
+            maker_amount_filled, taker_amount_filled,
+            token_id, condition_id, price, usdc_amount, token_amount,
+            side_str, 2,
+        ))
+
+    with conn.cursor() as cur:
+        psycopg2.extras.execute_values(cur, """
+            INSERT INTO order_matches
+            (tx_hash, log_index, block_number, block_timestamp, exchange,
+             taker_order_hash, taker_order_maker,
+             maker_asset_id, taker_asset_id,
+             maker_amount_filled, taker_amount_filled,
+             token_id, condition_id, price, usdc_amount, token_amount,
+             side, exchange_version)
+            VALUES %s
+            ON CONFLICT (tx_hash, log_index) DO NOTHING
+        """, rows, page_size=1000)
+    return len(rows)
+
+
 def process_resolution_logs(logs, conn, cache: BatchCache):
     """Parse ConditionResolution logs and insert into resolutions + update markets.
 

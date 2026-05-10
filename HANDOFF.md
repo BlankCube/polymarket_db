@@ -125,16 +125,19 @@ referring to previous turn's data) and `suggest_example_questions` (for
 
 ---
 
-## What's live as of 2026-05-07
+## What's live as of 2026-05-08
 
 Three daemons + PG; see `OPERATIONS.md` for details:
 
-1. `unified_indexer.py --loop 30 --workers 4 --stop-at 86126998` —
-   incremental on-chain scan of **8 event types** (CTF/Neg-Risk
-   fills+matches, resolution, redemption, split, merge), running on
-   4 worker connections grouped by target table. Single watermark:
-   `unified_last_block`. Currently catching up; auto-halts at the
-   2026-04-28 V1→V2 cutover (block 86,126,998) until V2 decoders ship.
+1. `unified_indexer.py --loop 30 --workers 4` — incremental on-chain
+   scan of **8 event types** (CTF/Neg-Risk fills+matches V1+V2,
+   resolution, redemption, split, merge), running on 4 worker
+   connections grouped by target table. Single watermark:
+   `unified_last_block`. Trade events come from `_fetch_exchange_logs`,
+   which transparently picks V1 vs V2 contracts + topics by era; CTF
+   backend (resolutions, redemptions, splits, merges) is unchanged
+   across V1/V2. The earlier `--stop-at 86126998` halt is no longer
+   needed and has been dropped from the daemon launch.
 2. `rollup.py --loop 60` — 5-table aggregate daemon, normally ≤ 60 s
    behind indexer; in dense block regions a single rollup cycle can
    take 5-10 min and the lag temporarily grows to 10-20K blocks before
@@ -145,18 +148,47 @@ Three daemons + PG; see `OPERATIONS.md` for details:
 to refuse execution): `database/backfill_splits_merges.py` (2026-04-22
 — splits/merges are now in the unified indexer).
 
-Current data cutoff: indexer at block **~84.5 M** (around 2025-12 mid),
-chain tip ~86.2 M. Polymarket migrated to V2 contracts on 2026-04-28
-at block 86,127,000; our indexer is paused ~10 K blocks before that
-boundary by `--stop-at` so we don't sail past with V1 decoders and
-silently drop V2 events. Step1's prompt has cutoff-awareness logic —
-it warns users when their window extends past the indexed range.
+**V2 contract migration (2026-04-28, block 86,126,998).** Polymarket
+deployed new V2 exchange contracts (`CTF_EXCHANGE_V2` and
+`NEG_RISK_CTF_EXCHANGE_V2`) and a wrapped collateral layer (PMCT /
+pUSD = `0xC011a7E1...82DFB`, 6-decimal 1:1 USDC wrapper). What the
+migration changes / does NOT change for us:
 
-**Disk** (1.9 TB total) burns at ~70 GB/day during catch-up; resize
+| Layer | Change | Indexer impact |
+|---|---|---|
+| Exchange addresses | new V2 pair | new contract addrs in fetch params |
+| OrderFilled fields | `(side, tokenId)` direct + `builder` + `metadata`; drops `(makerAssetId, takerAssetId)` derivation | new V2 decoder; `order_fills` gets `builder`/`metadata`/`exchange_version` columns |
+| OrdersMatched fields | drops `maker_order_maker` (per-fill events identify each maker) | V2 rows insert with `maker_order_maker = NULL` |
+| Collateral at exchange layer | USDC.e → pUSD | none — same 6 decimals, /1e6 still correct |
+| ConditionalTokens contract | unchanged | none — splits/merges/redemptions/resolutions decoders untouched |
+| Collateral at CTF layer | pUSD unwrapped to USDC.e by adapter | none — `position_splits.collateral_token` still USDC.e or NegRisk wrapper |
+
+V1 rows in `order_fills` / `order_matches` keep `exchange_version=1`;
+V2 rows insert with `exchange_version=2`. The `exchange` column
+('ctf' / 'neg_risk') retains its family meaning — queries that filter
+`WHERE exchange='ctf'` cover both eras automatically. V2 decoder
+synthesises a V1-shape `(maker_asset_id, taker_asset_id)` pair so the
+existing rollups, AI-prompt schema annotations, and downstream queries
+keep working unchanged.
+
+Migration files under `database/migrations/`:
+- `2026_05_08_v2_indexer.sql` — cheap DDL (ADD COLUMN + indexer_state
+  cutover marker), runs in milliseconds.
+- `2026_05_08_v2_indexer_indexes.sql` — `CREATE INDEX CONCURRENTLY`
+  for the partial `(exchange_version)` indexes; takes 5-15 min on a
+  100M+ row table but holds only SHARE UPDATE EXCLUSIVE so the live
+  indexer keeps writing throughout.
+
+Current data cutoff: indexer at block **~85.1 M** (around 2026-01 mid),
+chain tip ~86.7 M. ETA to chain tip ~7 days at 147 blk/min sustained.
+Step1's prompt has cutoff-awareness logic — it warns users when their
+window extends past the indexed range.
+
+**Disk** (1.9 TB total) burns at ~70-100 GB/day during catch-up; resize
 EBS via the `OPERATIONS.md → Instance resize checklist` if free space
-drops below the runway needed for ETA-to-cutover. The previous
-expansion (1.2 TB → 2.0 TB) on 2026-05-04 happened mid-catch-up, no
-data loss but PG took ~2 min of WAL replay to come back.
+drops below the runway needed for ETA-to-tip. The previous expansion
+(1.2 TB → 2.0 TB) on 2026-05-04 happened mid-catch-up, no data loss
+but PG took ~2 min of WAL replay to come back.
 
 ---
 

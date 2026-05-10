@@ -30,16 +30,22 @@ from indexer import (
     get_current_block,
     process_order_filled_logs,
     process_orders_matched_logs,
+    process_order_filled_v2_logs,
+    process_orders_matched_v2_logs,
     process_resolution_logs,
     process_redemption_logs,
     process_position_split_logs,
     process_positions_merge_logs,
 )
 from config import (
-    CTF_EXCHANGE, NEG_RISK_CTF_EXCHANGE, CONDITIONAL_TOKENS,
+    CTF_EXCHANGE, NEG_RISK_CTF_EXCHANGE,
+    CTF_EXCHANGE_V2, NEG_RISK_CTF_EXCHANGE_V2,
+    CONDITIONAL_TOKENS,
     TOPIC_ORDER_FILLED, TOPIC_ORDERS_MATCHED,
+    TOPIC_ORDER_FILLED_V2, TOPIC_ORDERS_MATCHED_V2,
     TOPIC_CONDITION_RESOLUTION, TOPIC_PAYOUT_REDEMPTION,
     TOPIC_POSITION_SPLIT, TOPIC_POSITIONS_MERGE,
+    V2_CUTOVER_BLOCK,
     LOG_BATCH_SIZE,
     INDEXER_MAX_CONSECUTIVE_FAILURES,
     INDEXER_BACKOFF_SECONDS,
@@ -48,6 +54,84 @@ from config import (
 STATE_KEY = "unified_last_block"
 # Earliest point any data exists on either exchange.
 START_BLOCK = 44_000_000
+
+
+# ============ Era-aware exchange-event fetcher ============
+#
+# Polymarket migrated to V2 exchanges on 2026-04-28 at block V2_CUTOVER_BLOCK.
+# V1 exchanges (CTF_EXCHANGE / NEG_RISK_CTF_EXCHANGE) stop emitting trade
+# events after that block; V2 exchanges (CTF_EXCHANGE_V2 / NEG_RISK_..._V2)
+# start the next block. The CTF backend (resolutions, redemptions, splits,
+# merges) is unchanged — that fetch path still hits CONDITIONAL_TOKENS and
+# stays out of this helper.
+#
+# Returned dict is always 4-key with one bucket per (exchange-family ×
+# event-kind), and each bucket carries logs from BOTH eras concatenated when
+# the batch straddles the cutover. Decoding happens in the worker, which
+# splits each bucket back into V1 vs V2 by topic[0] and routes to the right
+# decoder. (Splitting in the fetch step would force every era boundary to
+# touch the wire layout — keeping it as raw logs lets the decoder own that
+# parse.)
+
+
+def _fetch_exchange_logs(from_block: int, to_block: int) -> dict:
+    """Fetch OrderFilled + OrdersMatched logs from the appropriate era's
+    exchange contracts for [from_block, to_block].
+
+    Three regimes:
+      - to_block <= cutover            → 4 V1 fetches only
+      - from_block > cutover           → 4 V2 fetches only
+      - straddling (rare; one batch)   → 8 fetches (4 V1 over [from, cutover],
+                                          4 V2 over [cutover+1, to_block])
+    """
+    cutover = V2_CUTOVER_BLOCK
+
+    if to_block <= cutover:
+        return {
+            "ctf_fills":   fetch_logs(CTF_EXCHANGE, [TOPIC_ORDER_FILLED], from_block, to_block),
+            "ctf_matches": fetch_logs(CTF_EXCHANGE, [TOPIC_ORDERS_MATCHED], from_block, to_block),
+            "neg_fills":   fetch_logs(NEG_RISK_CTF_EXCHANGE, [TOPIC_ORDER_FILLED], from_block, to_block),
+            "neg_matches": fetch_logs(NEG_RISK_CTF_EXCHANGE, [TOPIC_ORDERS_MATCHED], from_block, to_block),
+        }
+    if from_block > cutover:
+        return {
+            "ctf_fills":   fetch_logs(CTF_EXCHANGE_V2, [TOPIC_ORDER_FILLED_V2], from_block, to_block),
+            "ctf_matches": fetch_logs(CTF_EXCHANGE_V2, [TOPIC_ORDERS_MATCHED_V2], from_block, to_block),
+            "neg_fills":   fetch_logs(NEG_RISK_CTF_EXCHANGE_V2, [TOPIC_ORDER_FILLED_V2], from_block, to_block),
+            "neg_matches": fetch_logs(NEG_RISK_CTF_EXCHANGE_V2, [TOPIC_ORDERS_MATCHED_V2], from_block, to_block),
+        }
+
+    # Straddling batch (only happens once in the entire history).
+    v1_to = cutover
+    v2_from = cutover + 1
+    return {
+        "ctf_fills":   (fetch_logs(CTF_EXCHANGE, [TOPIC_ORDER_FILLED], from_block, v1_to)
+                        + fetch_logs(CTF_EXCHANGE_V2, [TOPIC_ORDER_FILLED_V2], v2_from, to_block)),
+        "ctf_matches": (fetch_logs(CTF_EXCHANGE, [TOPIC_ORDERS_MATCHED], from_block, v1_to)
+                        + fetch_logs(CTF_EXCHANGE_V2, [TOPIC_ORDERS_MATCHED_V2], v2_from, to_block)),
+        "neg_fills":   (fetch_logs(NEG_RISK_CTF_EXCHANGE, [TOPIC_ORDER_FILLED], from_block, v1_to)
+                        + fetch_logs(NEG_RISK_CTF_EXCHANGE_V2, [TOPIC_ORDER_FILLED_V2], v2_from, to_block)),
+        "neg_matches": (fetch_logs(NEG_RISK_CTF_EXCHANGE, [TOPIC_ORDERS_MATCHED], from_block, v1_to)
+                        + fetch_logs(NEG_RISK_CTF_EXCHANGE_V2, [TOPIC_ORDERS_MATCHED_V2], v2_from, to_block)),
+    }
+
+
+def _split_by_era(logs, v1_topic: str, v2_topic: str) -> tuple[list, list]:
+    """Partition a mixed-era log list into (v1_logs, v2_logs) by topic[0]."""
+    v1, v2 = [], []
+    for log in logs:
+        t0 = log["topics"][0]
+        # web3 returns topic[0] as a HexBytes; normalize to lowercase 0x-string.
+        t0_str = t0.hex() if hasattr(t0, "hex") else str(t0)
+        if not t0_str.startswith("0x"):
+            t0_str = "0x" + t0_str
+        if t0_str.lower() == v1_topic.lower():
+            v1.append(log)
+        elif t0_str.lower() == v2_topic.lower():
+            v2.append(log)
+        # Anything else (shouldn't happen with the era-aware fetcher) is silently
+        # dropped — better than mis-decoding into the wrong table.
+    return v1, v2
 
 
 def _process_batch(conn, cache, from_block, to_block, totals):
@@ -75,20 +159,36 @@ def _process_batch(conn, cache, from_block, to_block, totals):
     2026-04-22 we folded both event types into the unified batch so a single
     cursor drives every on-chain write. The standalone backfill script is
     retained only as a historical reference; do not re-run it.
+
+    NOTE on V1/V2 cutover (2026-04-28, block V2_CUTOVER_BLOCK): trade
+    events come from `_fetch_exchange_logs`, which transparently picks the
+    right exchange contract + topic per era. The CTF backend (resolutions,
+    redemptions, splits, merges) is unchanged across V1/V2 so its 4 fetches
+    stay direct.
     """
-    ctf_fills = fetch_logs(CTF_EXCHANGE, [TOPIC_ORDER_FILLED], from_block, to_block)
-    ctf_matches = fetch_logs(CTF_EXCHANGE, [TOPIC_ORDERS_MATCHED], from_block, to_block)
-    neg_fills = fetch_logs(NEG_RISK_CTF_EXCHANGE, [TOPIC_ORDER_FILLED], from_block, to_block)
-    neg_matches = fetch_logs(NEG_RISK_CTF_EXCHANGE, [TOPIC_ORDERS_MATCHED], from_block, to_block)
+    ex_logs = _fetch_exchange_logs(from_block, to_block)
     res_logs = fetch_logs(CONDITIONAL_TOKENS, [TOPIC_CONDITION_RESOLUTION], from_block, to_block)
     redeem_logs = fetch_logs(CONDITIONAL_TOKENS, [TOPIC_PAYOUT_REDEMPTION], from_block, to_block)
     split_logs = fetch_logs(CONDITIONAL_TOKENS, [TOPIC_POSITION_SPLIT], from_block, to_block)
     merge_logs = fetch_logs(CONDITIONAL_TOKENS, [TOPIC_POSITIONS_MERGE], from_block, to_block)
 
-    totals["ctf_fills"] += process_order_filled_logs(ctf_fills, "ctf", conn, cache)
-    totals["ctf_matches"] += process_orders_matched_logs(ctf_matches, "ctf", conn, cache)
-    totals["neg_fills"] += process_order_filled_logs(neg_fills, "neg_risk", conn, cache)
-    totals["neg_matches"] += process_orders_matched_logs(neg_matches, "neg_risk", conn, cache)
+    # Trade events: split each bucket into V1/V2 by topic[0] and route to the
+    # correct decoder. The "exchange" column ('ctf' / 'neg_risk') keeps its
+    # family meaning across versions; `exchange_version` (1/2) discriminates
+    # the wire format.
+    ctf_fills_v1, ctf_fills_v2 = _split_by_era(ex_logs["ctf_fills"], TOPIC_ORDER_FILLED, TOPIC_ORDER_FILLED_V2)
+    ctf_match_v1, ctf_match_v2 = _split_by_era(ex_logs["ctf_matches"], TOPIC_ORDERS_MATCHED, TOPIC_ORDERS_MATCHED_V2)
+    neg_fills_v1, neg_fills_v2 = _split_by_era(ex_logs["neg_fills"], TOPIC_ORDER_FILLED, TOPIC_ORDER_FILLED_V2)
+    neg_match_v1, neg_match_v2 = _split_by_era(ex_logs["neg_matches"], TOPIC_ORDERS_MATCHED, TOPIC_ORDERS_MATCHED_V2)
+
+    totals["ctf_fills"] += process_order_filled_logs(ctf_fills_v1, "ctf", conn, cache)
+    totals["ctf_fills"] += process_order_filled_v2_logs(ctf_fills_v2, "ctf", conn, cache)
+    totals["ctf_matches"] += process_orders_matched_logs(ctf_match_v1, "ctf", conn, cache)
+    totals["ctf_matches"] += process_orders_matched_v2_logs(ctf_match_v2, "ctf", conn, cache)
+    totals["neg_fills"] += process_order_filled_logs(neg_fills_v1, "neg_risk", conn, cache)
+    totals["neg_fills"] += process_order_filled_v2_logs(neg_fills_v2, "neg_risk", conn, cache)
+    totals["neg_matches"] += process_orders_matched_logs(neg_match_v1, "neg_risk", conn, cache)
+    totals["neg_matches"] += process_orders_matched_v2_logs(neg_match_v2, "neg_risk", conn, cache)
     totals["resolutions"] += process_resolution_logs(res_logs, conn, cache)
     totals["redemptions"] += process_redemption_logs(redeem_logs, conn, cache)
     totals["splits"] += process_position_split_logs(split_logs, conn, cache)
@@ -142,20 +242,29 @@ def _process_batch(conn, cache, from_block, to_block, totals):
 # docstring).
 
 
-def _job_order_fills(conn, ctf_logs, neg_logs):
+def _job_order_fills(conn, ctf_v1, ctf_v2, neg_v1, neg_v2):
+    """W1: order_fills writer. Era-mixed input — V1 and V2 logs already
+    pre-split by ``_split_by_era`` in the fetch step."""
     cache = BatchCache(conn)
-    n_ctf = process_order_filled_logs(ctf_logs, "ctf", conn, cache)
-    n_neg = process_order_filled_logs(neg_logs, "neg_risk", conn, cache)
+    n_ctf_v1 = process_order_filled_logs(ctf_v1, "ctf", conn, cache)
+    n_ctf_v2 = process_order_filled_v2_logs(ctf_v2, "ctf", conn, cache)
+    n_neg_v1 = process_order_filled_logs(neg_v1, "neg_risk", conn, cache)
+    n_neg_v2 = process_order_filled_v2_logs(neg_v2, "neg_risk", conn, cache)
     conn.commit()
-    return {"ctf_fills": n_ctf, "neg_fills": n_neg}
+    return {"ctf_fills": n_ctf_v1 + n_ctf_v2, "neg_fills": n_neg_v1 + n_neg_v2}
 
 
-def _job_order_matches(conn, ctf_logs, neg_logs):
+def _job_order_matches(conn, ctf_v1, ctf_v2, neg_v1, neg_v2):
+    """W2: order_matches writer. V2 OrdersMatched inserts with
+    `maker_order_maker = NULL` (the field was dropped in V2 because per-fill
+    OrderFilled events already carry maker identity)."""
     cache = BatchCache(conn)
-    n_ctf = process_orders_matched_logs(ctf_logs, "ctf", conn, cache)
-    n_neg = process_orders_matched_logs(neg_logs, "neg_risk", conn, cache)
+    n_ctf_v1 = process_orders_matched_logs(ctf_v1, "ctf", conn, cache)
+    n_ctf_v2 = process_orders_matched_v2_logs(ctf_v2, "ctf", conn, cache)
+    n_neg_v1 = process_orders_matched_logs(neg_v1, "neg_risk", conn, cache)
+    n_neg_v2 = process_orders_matched_v2_logs(neg_v2, "neg_risk", conn, cache)
     conn.commit()
-    return {"ctf_matches": n_ctf, "neg_matches": n_neg}
+    return {"ctf_matches": n_ctf_v1 + n_ctf_v2, "neg_matches": n_neg_v1 + n_neg_v2}
 
 
 def _job_ct_events(conn, res_logs, redeem_logs):
@@ -182,23 +291,32 @@ def _process_batch_parallel(main_conn, worker_conns, pool,
 
     Raises on any worker failure — outer loop handles rollback/retry.
     """
-    # Fetch all 8 event types sequentially (parallel RPC hurts QuikNode).
-    ctf_fills = fetch_logs(CTF_EXCHANGE, [TOPIC_ORDER_FILLED], from_block, to_block)
-    ctf_matches = fetch_logs(CTF_EXCHANGE, [TOPIC_ORDERS_MATCHED], from_block, to_block)
-    neg_fills = fetch_logs(NEG_RISK_CTF_EXCHANGE, [TOPIC_ORDER_FILLED], from_block, to_block)
-    neg_matches = fetch_logs(NEG_RISK_CTF_EXCHANGE, [TOPIC_ORDERS_MATCHED], from_block, to_block)
+    # Fetch all event types sequentially (parallel RPC hurts QuikNode).
+    # Trade events go through the era-aware fetcher; CTF backend is unchanged.
+    ex_logs = _fetch_exchange_logs(from_block, to_block)
     res_logs = fetch_logs(CONDITIONAL_TOKENS, [TOPIC_CONDITION_RESOLUTION], from_block, to_block)
     redeem_logs = fetch_logs(CONDITIONAL_TOKENS, [TOPIC_PAYOUT_REDEMPTION], from_block, to_block)
     split_logs = fetch_logs(CONDITIONAL_TOKENS, [TOPIC_POSITION_SPLIT], from_block, to_block)
     merge_logs = fetch_logs(CONDITIONAL_TOKENS, [TOPIC_POSITIONS_MERGE], from_block, to_block)
+
+    # Pre-split exchange logs into V1/V2 buckets so each worker decoder gets
+    # the right era's slice. For all-V1 batches the V2 lists are empty
+    # (and vice-versa), so the corresponding decoder calls early-return on
+    # an empty list.
+    ctf_fills_v1, ctf_fills_v2 = _split_by_era(ex_logs["ctf_fills"], TOPIC_ORDER_FILLED, TOPIC_ORDER_FILLED_V2)
+    ctf_match_v1, ctf_match_v2 = _split_by_era(ex_logs["ctf_matches"], TOPIC_ORDERS_MATCHED, TOPIC_ORDERS_MATCHED_V2)
+    neg_fills_v1, neg_fills_v2 = _split_by_era(ex_logs["neg_fills"], TOPIC_ORDER_FILLED, TOPIC_ORDER_FILLED_V2)
+    neg_match_v1, neg_match_v2 = _split_by_era(ex_logs["neg_matches"], TOPIC_ORDERS_MATCHED, TOPIC_ORDERS_MATCHED_V2)
 
     # Ensure each worker conn is alive before handing it to a thread.
     for i in range(4):
         worker_conns[i] = ensure_conn(worker_conns[i])
 
     futures = [
-        pool.submit(_job_order_fills,   worker_conns[0], ctf_fills,   neg_fills),
-        pool.submit(_job_order_matches, worker_conns[1], ctf_matches, neg_matches),
+        pool.submit(_job_order_fills,   worker_conns[0],
+                    ctf_fills_v1, ctf_fills_v2, neg_fills_v1, neg_fills_v2),
+        pool.submit(_job_order_matches, worker_conns[1],
+                    ctf_match_v1, ctf_match_v2, neg_match_v1, neg_match_v2),
         pool.submit(_job_ct_events,     worker_conns[2], res_logs,    redeem_logs),
         pool.submit(_job_positions,     worker_conns[3], split_logs,  merge_logs),
     ]

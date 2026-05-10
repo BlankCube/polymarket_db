@@ -5,3 +5,4 @@ __pycache__/
 webapp/logs/
 .env
 certs/
+feedback/logs/chat.jsonl
